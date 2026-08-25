@@ -1,0 +1,438 @@
+// ==UserScript==
+// @name         Idle Progress Bar MMO - Auto Buy
+// @namespace    local.idle.autobuy
+// @version      3.2.0
+// @description  Surligne l'upgrade la plus rentable, l'achète automatiquement et ramasse les boîtes, sans ajouter de polling
+// @match        https://idle-progress-bar-mmo.vercel.app/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(() => {
+  if (window.__idleAutobuy) { console.warn('autobuy déjà chargé'); return; }
+  window.__idleAutobuy = true;
+
+  // ---------- Réglages ----------
+  const WATCHDOG_MS    = 60000; // sans état reçu depuis ce délai, on va le chercher nous-mêmes
+  const MAX_ACTIONS    = 8;     // actions max par salve
+  const BUY_DELAY_MS   = 200;   // pause entre deux achats
+  const BULK_MAX       = 25;    // plafond dur sur la quantité par requête
+  const RESERVE        = 0;     // énergie à toujours garder de côté
+  const AUTO_RESEARCH  = false; // recherches gérées à la main
+  const RESEARCH_ORDER = ['generatorMk3', 'income', 'base', 'box', 'offline', 'offlineResearch', 'synergy'];
+  const LABELS = {
+    auto: 'Generator MK1', advanced: 'Generator MK2', generatorMk3: 'Generator MK3',
+    income: 'Income multiplier', costReduction: 'Cost Reduction',
+  };
+  const READY = '#22c55e';  // vert : achetable maintenant
+  const WAIT  = '#f59e0b';  // orange : meilleure cible, pas encore abordable
+  // --------------------------------
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const fmt = n => Math.round(n).toLocaleString('fr-FR');
+  const dur = s => (s < 0 || !isFinite(s)) ? '—'
+    : s < 60 ? `${Math.ceil(s)}s`
+    : s < 3600 ? `${Math.floor(s / 60)}m${String(Math.ceil(s % 60)).padStart(2, '0')}`
+    : `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`;
+
+  const origFetch = window.fetch.bind(window);
+  let reqs = 0;            // requêtes ajoutées par le script
+  let boxPeriod = 600;     // intervalle moyen entre deux boîtes (s), affiné à l'usage
+  let lastBoxAt = 0;
+
+  const post = async (url, body) => {
+    reqs++;
+    const r = await origFetch(url, body ? {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    } : { method: 'POST' });
+    const json = await r.json();
+    if (!r.ok) throw new Error(json.error || r.status);
+    return json;
+  };
+
+  // Production de base (avant multiplicateurs) : sert à valoriser l'income multiplier
+  const baseRate = p =>
+    p.basePassiveRate
+    + p.upgrades.auto.level * 1
+    + p.upgrades.advanced.level * 5
+    + p.upgrades.generatorMk3.level * 10;
+
+  // Bonus temporaires (Tier Surge empilé, bonus pub) : ils gonflent la production
+  // du moment mais disparaîtront. On valorise les upgrades, qui sont permanentes,
+  // au tarif hors bonus ; les bonus ne servent qu'à calculer l'accumulation réelle.
+  const surgeOf = p => (p.bonusActive ? p.bonusMultiplier : 1) * (p.adBonusActive ? p.adBonusMultiplier : 1);
+  const permRate = p => p.passiveRate / Math.max(1, surgeOf(p));
+  const mult = p => permRate(p) / Math.max(1e-9, baseRate(p));
+
+  // Gain en ⚡/s apporté par un niveau supplémentaire, TOUJOURS en production finale
+  // hors bonus temporaires. Mélanger gain brut et gain multiplié fausse le classement.
+  const gainOf = (type, p) => {
+    const M = mult(p);
+    switch (type) {
+      case 'auto':          return 1 * M;
+      case 'advanced':      return 5 * M;
+      case 'generatorMk3':  return 10 * M;
+      // +10% de la BASE : le niveau n+1 ne rapporte pas 10% du total déjà multiplié
+      case 'income':        return 0.10 * baseRate(p) * M / (1 + 0.10 * p.upgrades.income.level);
+      // -2% sur le coût des autres upgrades ≈ +2% de pouvoir d'achat
+      case 'costReduction': return 0.02 * permRate(p);
+      default:              return 0;
+    }
+  };
+
+  // Upgrades éligibles, triées par ratio gain/coût décroissant
+  const candidates = p => Object.entries(p.upgrades)
+    .filter(([type, u]) =>
+      !u.locked
+      && !(u.maxLevel != null && u.level >= u.maxLevel)
+      && gainOf(type, p) > 0)
+    .map(([type, u]) => ({ type, u, cost: u.cost, gain: gainOf(type, p), ratio: gainOf(type, p) / u.cost }))
+    .sort((a, b) => b.ratio - a.ratio);
+
+  // Croissance du coût par niveau, déduite de cost10 = cost × (r¹⁰ - 1)/(r - 1)
+  const growth = u => {
+    if (!u.cost10 || u.cost10 <= u.cost) return null;
+    const target = u.cost10 / u.cost;
+    let lo = 1.0001, hi = 3;
+    for (let i = 0; i < 40; i++) {
+      const r = (lo + hi) / 2;
+      if ((Math.pow(r, 10) - 1) / (r - 1) < target) lo = r; else hi = r;
+    }
+    return (lo + hi) / 2;
+  };
+
+  // Apport moyen des boîtes en ⚡/s, période mesurée entre deux ramassages réels.
+  // N'est utilisé QUE par le simulateur : sur plusieurs heures et une vingtaine de
+  // boîtes, l'espérance est la bonne grandeur. Surtout pas dans eta(), voir ci-dessous.
+  const boxRate = p => (autoBox && p.box && p.box.energyReward) ? p.box.energyReward / boxPeriod : 0;
+
+  // Temps garanti pour atteindre un coût, à la seule production. Volontairement sans
+  // les boîtes : une ETA ne doit dépendre que d'énergie certaine, sinon elle annonce
+  // une date suspendue à un événement qui n'a pas eu lieu. C'est donc une borne haute,
+  // recalculée dès qu'une boîte tombe puisque adopt() propage le nouvel état.
+  // Tient compte de l'extinction de la surge : on accumule à passiveRate tant qu'elle
+  // dure, puis au tarif permanent. Prudent : la communauté la ré-empile souvent.
+  const eta = (cost, p) => {
+    const need = cost - (p.energy - RESERVE);
+    if (need <= 0) return 0;
+    const tSurge = p.bonusActive ? (p.bonusRemainingMs || 0) / 1000 : 0;
+    if (need <= p.passiveRate * tSurge) return need / p.passiveRate;
+    return tSurge + (need - p.passiveRate * tSurge) / permRate(p);
+  };
+
+  // Le jeu remet upgrades et énergie à zéro à 00:00 UTC (les recherches survivent).
+  // Tout raisonnement de rentabilisation est donc borné par ce délai.
+  const msToReset = () => {
+    const n = new Date();
+    return Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate() + 1) - n.getTime();
+  };
+
+  // Simulation locale de la fin de journée : combien d'énergie sera produite d'ici le
+  // reset si le prochain achat est `firstType`, puis qu'on enchaîne au meilleur ratio.
+  // Modèle : coûts géométriques (raison déduite de cost10/cost), gains linéaires,
+  // multiplicateur income (1 + 0,1 × niveau), facteur permanent K et apport des boîtes
+  // supposés constants. Aucune requête : tout est calculé sur l'état déjà reçu.
+  const GEN = { auto: 1, advanced: 5, generatorMk3: 10 };
+  const simulate = (p, T, firstType) => {
+    const lvl = {}, cost = {}, r = {}, max = {};
+    for (const [type, u] of Object.entries(p.upgrades)) {
+      if (u.locked) continue;
+      lvl[type] = u.level; cost[type] = u.cost; r[type] = growth(u) || 1.2; max[type] = u.maxLevel;
+    }
+    let base = baseRate(p);
+    let inc = lvl.income || 0;
+    const K = permRate(p) / Math.max(1e-9, base * (1 + 0.1 * inc));
+    const bx = boxRate(p);
+    const rate = () => base * (1 + 0.1 * inc) * K + bx;
+    const gain = t => t === 'income' ? 0.1 * base * K
+      : t === 'costReduction' ? 0.02 * rate()
+      : GEN[t] * (1 + 0.1 * inc) * K;
+
+    let E = p.energy - RESERVE, t = 0, produced = 0, first = true;
+    let run = 0, streak = true; // combien de fois le plan rachète le même type d'entrée
+    for (let step = 0; step < 400 && t < T; step++) {
+      const opts = Object.keys(lvl).filter(k => max[k] == null || lvl[k] < max[k]);
+      if (!opts.length) break;
+      const c = first && firstType ? firstType
+        : opts.sort((a, b) => gain(b) / cost[b] - gain(a) / cost[a])[0];
+      first = false;
+      if (cost[c] == null) break;
+      const dt = Math.max(0, (cost[c] - E) / rate());
+      if (t + dt >= T) break;
+      produced += rate() * dt; E += rate() * dt - cost[c]; t += dt;
+      if (streak && c === firstType) run++; else streak = false;
+      lvl[c]++; cost[c] *= r[c];
+      if (c === 'income') inc++;
+      else if (c === 'costReduction') { for (const k in cost) if (k !== 'costReduction') cost[k] *= 0.98; }
+      else base += GEN[c];
+    }
+    return { produced: produced + rate() * (T - t), run: Math.max(1, run) };
+  };
+
+  // Plan d'achat : un seul objectif, maximiser l'énergie produite d'ici le reset.
+  // On essaie chaque upgrade comme prochain achat, on simule la suite, on garde la
+  // meilleure. Ça remplace les heuristiques de ratio et de remboursement : elles n'en
+  // étaient que des approximations, valables chacune dans un régime différent.
+  //  best = prochain achat visé          pick = ce qu'on achète tout de suite (ou rien)
+  //  wait = attente avant de l'avoir     proj = production projetée d'ici le reset
+  //  qty  = nombre de niveaux, repris de la séquence simulée (et non d'une heuristique
+  //         séparée) : on ne groupe que ce que la simulation rachèterait de toute façon.
+  const plan = p => {
+    const T = msToReset() / 1000;
+    const list = candidates(p);
+    if (!list.length) return { best: null, pick: null, wait: 0, T, proj: 0, qty: 1 };
+    let best = list[0], proj = -1, run = 1;
+    for (const c of list) {
+      const s = simulate(p, T, c.type);
+      if (s.produced > proj) { proj = s.produced; best = c; run = s.run; }
+    }
+    const room = best.u.maxLevel != null ? best.u.maxLevel - best.u.level : Infinity;
+    const qty = Math.max(1, Math.min(run, best.u.maxAffordable || 1, room, BULK_MAX));
+    const wait = eta(best.cost, p);
+    const pick = best.cost <= p.energy - RESERVE ? best : null;
+    return { best, pick, wait, T, proj, qty };
+  };
+
+  // Recherches : ordre de priorité fixe, on prend la première abordable
+  const pickResearch = p => {
+    for (const type of RESEARCH_ORDER) {
+      const r = p.research[type];
+      if (!r) continue;
+      if (r.maxLevel != null && r.level >= r.maxLevel) continue;
+      if (r.cost <= p.researchPoints) return { type, cost: r.cost };
+    }
+    return null;
+  };
+
+  // ---------- Surlignage de la carte dans le jeu ----------
+  // On cible la carte via son titre puis on pose des styles inline : React ne
+  // touche pas à l'attribut style de ces noeuds, le surlignage survit aux re-renders.
+  let marked = null;
+  const cardOf = label => {
+    for (const p of document.querySelectorAll('p.font-semibold')) {
+      if (p.textContent.trim() === label) return p.closest('div.rounded-lg');
+    }
+    return null;
+  };
+  const clearMark = () => {
+    if (!marked) return;
+    marked.style.outline = marked.style.outlineOffset = marked.style.boxShadow = marked.style.background = '';
+    marked = null;
+  };
+  const mark = (type, affordable) => {
+    const card = cardOf(LABELS[type]);
+    if (card !== marked) clearMark();
+    if (!card) return;
+    const c = affordable ? READY : WAIT;
+    card.style.outline = `2px solid ${c}`;
+    card.style.outlineOffset = '2px';
+    card.style.boxShadow = `0 0 14px ${c}66`;
+    card.style.background = `${c}14`;
+    marked = card;
+  };
+
+  // ---------- Panneau ----------
+  const KEY = 'idleAutobuy.on';
+  const KEY_BOX = 'idleAutobuy.box';
+  let running = localStorage.getItem(KEY) !== '0';
+  let autoBox = localStorage.getItem(KEY_BOX) !== '0';
+  let bought = 0;
+  let boxes = 0;
+  const log = [];
+
+  const box = document.createElement('div');
+  box.style.cssText = `
+    position:fixed; right:16px; bottom:16px; z-index:2147483647; width:250px;
+    font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:#e2e8f0;
+    background:rgba(15,23,42,.95); border:1px solid #334155; border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.5); user-select:none;`;
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #334155">
+      <span id="ab-dot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
+      <b style="flex:1;font-size:11px;letter-spacing:.05em;text-transform:uppercase">Auto Buy</b>
+      <button id="ab-min" style="all:unset;cursor:pointer;padding:0 4px;color:#94a3b8">–</button>
+      <button id="ab-toggle" style="all:unset;cursor:pointer;padding:2px 10px;border-radius:4px;font-weight:600;font-size:11px"></button>
+    </div>
+    <div id="ab-body" style="padding:8px 10px;display:flex;flex-direction:column;gap:4px">
+      <div id="ab-stats" style="color:#94a3b8">en attente du 1er état…</div>
+      <div id="ab-surge" style="color:#64748b;font-size:11px"></div>
+      <div id="ab-target" style="color:#e2e8f0">—</div>
+      <div id="ab-hold" style="color:#64748b;font-size:11px"></div>
+      <div id="ab-box" style="cursor:pointer;color:#94a3b8" title="Cliquer pour activer/désactiver le ramassage des boîtes"></div>
+      <div id="ab-net" style="color:#475569;font-size:11px"></div>
+      <div id="ab-log" style="margin-top:4px;padding-top:6px;border-top:1px solid #1e293b;color:#64748b;min-height:52px"></div>
+    </div>`;
+  document.body.appendChild(box);
+
+  const $ = id => box.querySelector('#ab-' + id);
+  const paint = () => {
+    const b = $('toggle');
+    b.textContent = running ? 'ON' : 'OFF';
+    b.style.background = running ? '#16a34a' : '#475569';
+    b.style.color = '#fff';
+    $('dot').style.background = running ? READY : '#64748b';
+    $('dot').title = running ? 'achats automatiques actifs' : 'achats en pause (analyse toujours active)';
+    $('box').innerHTML = `📦 boîtes : <b style="color:${autoBox ? READY : '#64748b'}">${autoBox ? 'AUTO' : 'OFF'}</b> · ${boxes} ramassées`;
+  };
+  $('toggle').onclick = () => {
+    running = !running;
+    localStorage.setItem(KEY, running ? '1' : '0');
+    paint();
+    schedule();
+  };
+  $('box').onclick = () => {
+    autoBox = !autoBox;
+    localStorage.setItem(KEY_BOX, autoBox ? '1' : '0');
+    paint();
+    schedule();
+  };
+  $('min').onclick = () => {
+    const body = $('body');
+    body.style.display = body.style.display === 'none' ? 'flex' : 'none';
+  };
+  const addLog = line => {
+    log.unshift(line);
+    log.length = Math.min(log.length, 3);
+    $('log').innerHTML = log.map(l => `<div>${l}</div>`).join('');
+  };
+  paint();
+
+  // ---------- Affichage ----------
+  // Entre deux états reçus, on extrapole l'énergie localement
+  // (énergie connue + production × temps écoulé) : aucun appel réseau.
+  let snap = null, snapAt = 0, lastSeen = 0;
+
+  const render = p => {
+    $('stats').textContent = `${fmt(p.energy)} ⚡ · +${fmt(p.passiveRate)}/s · ${bought} achats`;
+    const s = surgeOf(p);
+    const { best, pick, wait, T, proj } = plan(p);
+    $('surge').textContent = `⏳ reset dans ${dur(T)}`
+      + (s > 1 ? ` · 🎉 ×${s} ${dur((p.bonusRemainingMs || 0) / 1000)} · base ${fmt(permRate(p))}/s` : '');
+    if (!best) {
+      $('target').textContent = 'rien à acheter';
+      $('hold').textContent = '';
+      clearMark();
+      return;
+    }
+    const ready = wait === 0;
+    $('target').innerHTML = `<span style="color:${ready ? READY : WAIT}">→ ${LABELS[best.type] || best.type}</span>`
+      + ` · ⚡${fmt(best.cost)} · ${ready ? 'prêt' : dur(wait)}`;
+    $('hold').textContent = `≈ ${fmt(proj / 1e6)}M produits d'ici le reset`
+      + (ready ? '' : ' · ⏸ épargne');
+    mark(best.type, ready);
+  };
+
+  setInterval(() => {
+    if (!snap) return;
+    const el = Date.now() - snapAt;
+    const left = Math.max(0, (snap.bonusRemainingMs || 0) - el); // la surge s'écoule aussi
+    render({
+      ...snap,
+      energy: snap.energy + snap.passiveRate * el / 1000,
+      bonusRemainingMs: left,
+      bonusActive: snap.bonusActive && left > 0,
+    });
+    $('net').textContent = `🔌 état reçu il y a ${dur((Date.now() - lastSeen) / 1000)} · ${reqs} req. ajoutées`;
+  }, 1000);
+
+  // ---------- Actions ----------
+  let latest = null, busy = false;
+
+  // Nos POST renvoient l'état complet : on l'adopte comme référence pour ne pas
+  // raisonner (ni afficher) sur une énergie déjà dépensée. On ne touche pas à
+  // lastSeen, réservé à la surveillance du polling de la page.
+  const adopt = q => { latest = q; snap = q; snapAt = Date.now(); render(q); };
+
+  const act = async () => {
+    if (busy || !latest) return;
+    busy = true;
+    try {
+      let p = latest;
+      for (let i = 0; i < MAX_ACTIONS; i++) {
+        // Boîte d'abord : son énergie compte pour l'achat qui suit
+        if (autoBox && p.box && p.box.available) {
+          const res = await post('/api/box/claim');
+          const rw = res.boxReward;
+          if (rw) { boxes++; addLog(`📦 +${fmt(rw.energy)} ⚡ · +${fmt(rw.researchPoints)} 🔬`); }
+          // intervalle réel entre deux boîtes : alimente le lissage de boxRate()
+          const now = Date.now();
+          if (lastBoxAt) boxPeriod = 0.7 * boxPeriod + 0.3 * Math.min(3600, (now - lastBoxAt) / 1000);
+          lastBoxAt = now;
+          p = res.player;
+          adopt(p);
+          paint();
+          continue;
+        }
+        if (!running) break;
+
+        const { pick, qty } = plan(p);
+        const re = AUTO_RESEARCH ? pickResearch(p) : null;
+        if (!pick && !re) break;
+
+        if (pick) {
+          const res = await post('/api/upgrade', { type: pick.type, quantity: qty });
+          bought += qty;
+          p = res.player;
+          addLog(`⚡ ${LABELS[pick.type] || pick.type} ×${qty} → niv.${p.upgrades[pick.type].level}`);
+        }
+        if (re) {
+          const res = await post('/api/research', { type: re.type, quantity: 1 });
+          p = res.player;
+          addLog(`🔬 ${re.type} niv.${p.research[re.type].level}`);
+        }
+        adopt(p);
+        await sleep(BUY_DELAY_MS);
+      }
+    } catch (e) {
+      $('target').textContent = 'erreur : ' + e.message; // on retentera au prochain état reçu
+    } finally {
+      busy = false;
+    }
+  };
+  const schedule = () => { if (!busy) act(); };
+
+  const onState = p => {
+    latest = p;
+    snap = p;
+    snapAt = lastSeen = Date.now();
+    render(p);
+    schedule();
+  };
+
+  // ---------- Interception ----------
+  // La page poll déjà /api/state toutes les 3 s : on lit ses réponses au passage
+  // plutôt que d'émettre les nôtres. Coût réseau du script : zéro requête de lecture.
+  window.fetch = async (...args) => {
+    const res = await origFetch(...args);
+    try {
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+      if (url.includes('/api/')) {
+        res.clone().json().then(j => { if (j && j.player) onState(j.player); }).catch(() => {});
+      }
+    } catch (e) { /* on ne casse jamais le fetch de la page */ }
+    return res;
+  };
+
+  // Filet de sécurité : si la page cesse de poller, on va chercher l'état nous-mêmes
+  setInterval(async () => {
+    if (Date.now() - lastSeen < WATCHDOG_MS) return;
+    try {
+      reqs++;
+      const r = await origFetch('/api/state', { cache: 'no-store' });
+      const j = await r.json();
+      if (j && j.player) onState(j.player);
+    } catch (e) { /* réseau coupé : on retentera */ }
+  }, 15000);
+
+  console.log('autobuy 2.0 chargé — lecture passive du polling de la page');
+})();
+
+
+
+
+
+
+
+
