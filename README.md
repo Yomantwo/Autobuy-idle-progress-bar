@@ -68,9 +68,25 @@ montent (+15 %/niveau), sans ordre codé en dur.
   production qui survit au reset (donc sur ce que rapporte le hors ligne).
 - `offline` : +1 point de ratio hors ligne, valorisé sur le plancher post-reset.
 - `quickStart` : garantit un palier de départ sur les générateurs à chaque reset
-  (proportionnel au meilleur niveau jamais atteint) ; valorisée par simulation de
-  branches, comme Cost Reduction, parce que son effet déplace le point de départ de
-  toute la journée plutôt que d'ajouter un simple pourcentage.
+  (proportionnel au meilleur niveau jamais atteint, arrondi **au supérieur**) ; valorisée
+  par simulation de branches, comme Cost Reduction, parce que son effet déplace le point de
+  départ de toute la journée plutôt que d'ajouter un simple pourcentage.
+
+### Calibration du hors ligne
+
+Le modèle hors ligne est calé sur une mesure réelle plutôt que sur des valeurs supposées :
+12 h de coupure ont rapporté 6,17 M ⚡. Une première calibration naïve (plancher complet
+`mult(p)` × 12 h) tombait 38 % au-dessus de la mesure. Le développeur du jeu a confirmé que
+les boosts **globaux** (Collective Synergy, qui agrège le niveau de recherche de tous les
+joueurs connectés) ne s'appliquent pas hors ligne — seuls les bonus **personnels et
+permanents** comptent. En excluant Collective Synergy et en ne gardant que la recherche
+`income` (+1 %/niveau, personnelle), le modèle tombe pile sur la mesure : écart 0,000 %.
+`OFFLINE_BASE_RATIO` reprend donc directement la valeur de l'infobulle du jeu (0,50).
+
+La même mesure a aussi corrigé deux erreurs indépendantes : le palier Quick Start s'arrondit
+au supérieur (à 20 % de 95/59/51 le jeu accorde 19/12/11, ce que seul `ceil` reproduit), et
+`baseRate()` doit inclure le bonus de la recherche `base` — sans quoi `mult()`, défini comme
+`permRate / baseRate`, l'absorbe et le compte une seconde fois.
 
 `offlineResearch` et `dailyBonus` rapportent des **points**, pas de l'énergie — elles se
 comparent dans leur propre monnaie (points gagnés par jour et par point investi) plutôt que
@@ -106,6 +122,7 @@ En haut du fichier :
 | `WAIT_WEIGHT` | 24 | poids de l'attente dans le score des upgrades |
 | `OFFLINE_DAYS_PER_WEEK` | 2.5 | rythme de déconnexion estimé, influence le classement d'`offline` |
 | `OFFLINE_CAP_HOURS` | 12 | plafond de durée créditée hors ligne (confirmé par le jeu) |
+| `OFFLINE_BASE_RATIO` | 0.50 | socle de la part créditée hors ligne, hors bonus de recherche (infobulle du jeu, confirmé exact) |
 | `WATCHDOG_MS` | 60000 | délai avant d'aller chercher l'état soi-même |
 
 ## Limites connues

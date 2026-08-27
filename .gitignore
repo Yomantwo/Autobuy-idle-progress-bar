@@ -5,6 +5,7 @@
 state.json
 state_prev.json
 state_boot.json
+mesures/
 
 # Outils prives (capture d etat, jamais partages)
 idle-state-push.user.js

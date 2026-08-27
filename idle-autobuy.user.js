@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      5.5.0
+// @version      5.6.1
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://idle-progress-bar-mmo.vercel.app/*
 // @run-at       document-idle
@@ -30,6 +30,10 @@
   // Plafond dur confirmé par l'infobulle du jeu : au-delà de 12 h le hors ligne ne rapporte
   // plus rien, quelle que soit la durée réelle de la coupure.
   const OFFLINE_CAP_HOURS = 12;
+  // Socle de la part créditée hors ligne, hors bonus de recherche. Valeur du jeu (infobulle),
+  // confirmée exacte le 27/08 une fois offlineMult() corrigé (voir plus bas) : 12 h hors ligne
+  // à 246,44 ⚡/s (plancher SANS la synergie collective) × 0,58 = 6 174 801, écart 0,000 %.
+  const OFFLINE_BASE_RATIO = 0.50;
 
   // Production apportée par un niveau de chaque générateur (avant multiplicateurs).
   const GEN = { auto: 1, advanced: 5, generatorMk3: 10 };
@@ -96,9 +100,11 @@
   };
 
   // ---------- Modèle de production ----------
-  // Production de base, avant multiplicateurs.
+  // Production de base, avant multiplicateurs. Inclut le bonus de la recherche base : sinon
+  // mult() (= permRate/baseRate) l'absorbe, et floorRate() qui l'ajoute le compte deux fois.
   const baseRate = p => Object.entries(GEN)
-    .reduce((s, [k, v]) => s + v * (p.upgrades[k] ? p.upgrades[k].level : 0), p.basePassiveRate);
+    .reduce((s, [k, v]) => s + v * (p.upgrades[k] ? p.upgrades[k].level : 0),
+      p.basePassiveRate + p.research.base.bonusValue);
 
   // Bonus temporaires (Surge, pub) gonflent la production du moment mais disparaissent.
   // On valorise les upgrades au tarif hors bonus ; les bonus ne servent qu'à l'accumulation.
@@ -251,14 +257,22 @@
   // ---------- Recherches ----------
   // Secondes hors ligne par jour en moyenne, d'après le rythme déclaré.
   const offlineSecPerDay = () => OFFLINE_DAYS_PER_WEEK * OFFLINE_CAP_HOURS * 3600 / 7;
-  // Part de la production créditée hors ligne : 50 % de base, +1 point par niveau.
-  const offlineRatio = p => 0.50 + 0.01 * p.research.offline.level;
+  // Part de la production créditée hors ligne : socle + 1 point par niveau (confirmé par
+  // l'infobulle du jeu, et vérifié à 0,000 % d'écart sur une mesure réelle une fois offlineMult
+  // corrigé ci-dessous).
+  const offlineRatio = p => OFFLINE_BASE_RATIO + 0.01 * p.research.offline.level;
+  // Multiplicateur qui s'applique hors ligne : uniquement les bonus PERSONNELS et permanents
+  // (recherche income). Le dev confirme que les boosts GLOBAUX (Collective Synergy, qui agrège
+  // le niveau de tous les joueurs connectés) ne s'appliquent pas hors ligne — contrairement à
+  // mult(p), qui les inclut tous sans distinction. Vérifié exact sur une mesure réelle (12 h,
+  // 6,17 M ⚡) : mult(p) donnait 38 % d'erreur, offlineMult(p) 0,000 %.
+  const offlineMult = p => 1 + 0.01 * p.research.income.level;
   // Palier garanti par Quick Start sur MK1/MK2/MK3 : pct × meilleur niveau jamais atteint.
-  // Partagé avec floorRate() pour ne pas dupliquer la formule.
+  // ceil, pas floor : à 20 % de 95/59/51 le jeu accorde 19/12/11, seul ceil reproduit les trois.
   const quickStartHeadstart = (p, lvl) => {
     const pct = 0.05 * lvl, hs = {};
     for (const t of ['auto', 'advanced', 'generatorMk3']) {
-      hs[t] = Math.floor(pct * (p.upgrades[t].bestLevel ?? p.upgrades[t].level));
+      hs[t] = Math.ceil(pct * (p.upgrades[t].bestLevel ?? p.upgrades[t].level));
     }
     return hs;
   };
@@ -268,7 +282,7 @@
     const hs = quickStartHeadstart(p, p.research.quickStart.level);
     const base = p.basePassiveRate + p.research.base.bonusValue
       + hs.auto + 5 * hs.advanced + GEN.generatorMk3 * hs.generatorMk3;
-    return base * mult(p) / (1 + 0.1 * p.upgrades.income.level);
+    return base * offlineMult(p);
   };
   // ⚡/jour apportés par un niveau de plus. Un seul critère pour les recherches qui
   // produisent de l'ÉNERGIE ; c'est ensuite gain/coût qui décide entre elles.
@@ -278,7 +292,7 @@
     synergy: p => permRate(p) * 0.01 * 86400,
     // +1 à la production de base : agit sur le cycle actif ET sur le plancher hors ligne.
     base: p => mult(p) * 86400
-      + (mult(p) / (1 + 0.1 * p.upgrades.income.level)) * offlineSecPerDay() * offlineRatio(p),
+      + offlineMult(p) * offlineSecPerDay() * offlineRatio(p),
     // +1 point de pourcentage sur la part créditée hors ligne, appliqué au seul plancher.
     offline: p => floorRate(p) * 0.01 * offlineSecPerDay(),
     // Recherche (jamais reset) : garantit un palier de départ sur MK1/MK2/MK3 chaque jour.
@@ -294,8 +308,7 @@
 
       const floorDelta = (hsNext.auto - hsCur.auto) + 5 * (hsNext.advanced - hsCur.advanced)
         + GEN.generatorMk3 * (hsNext.generatorMk3 - hsCur.generatorMk3);
-      const offline = floorDelta * mult(p) / (1 + 0.1 * p.upgrades.income.level)
-        * offlineSecPerDay() * offlineRatio(p);
+      const offline = floorDelta * offlineMult(p) * offlineSecPerDay() * offlineRatio(p);
 
       return active + offline;
     },
@@ -583,5 +596,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v5.5.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v5.6.1 chargé — lecture passive du polling de la page');
 })();
