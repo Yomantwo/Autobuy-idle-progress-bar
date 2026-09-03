@@ -185,6 +185,13 @@ En haut du fichier :
   fenêtre visible et exclure le site de l'économiseur de mémoire
   (`chrome://settings/performance`).
 
+## Versions
+
+`MAJEUR.MINEUR.PATCH` : majeur pour un nouveau système entier (upgrades → +recherches →
++Factory), mineur pour une nouveauté réelle dans un système existant (nouvelle recherche,
+nouvelle règle de décision), patch pour les corrections et recalibrations sans changement
+de comportement.
+
 ## Licence
 
 MIT — voir [LICENSE](LICENSE).

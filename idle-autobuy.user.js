@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      6.1.1
+// @version      3.0.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -710,5 +710,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v6.1.1 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.0.0 chargé — lecture passive du polling de la page');
 })();
