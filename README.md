@@ -86,21 +86,11 @@ qui augmente le coût de tous les upgrades de 25 % tant qu'il est actif, sans ri
 que ce script ne fasse déjà — en mieux (rythme adaptatif au lieu d'un rachat fixe toutes les
 60 s, sans le surcoût).
 
-### Calibration du hors ligne
-
-Le modèle hors ligne est calé sur une mesure réelle plutôt que sur des valeurs supposées :
-12 h de coupure ont rapporté 6,17 M ⚡. Une première calibration naïve (plancher complet
-`mult(p)` × 12 h) tombait 38 % au-dessus de la mesure. Le développeur du jeu a confirmé que
-les boosts **globaux** (Collective Synergy, qui agrège le niveau de recherche de tous les
-joueurs connectés) ne s'appliquent pas hors ligne — seuls les bonus **personnels et
-permanents** comptent. En excluant Collective Synergy et en ne gardant que la recherche
-`income` (+1 %/niveau, personnelle), le modèle tombe pile sur la mesure : écart 0,000 %.
-`OFFLINE_BASE_RATIO` reprend donc directement la valeur de l'infobulle du jeu (0,50).
-
-La même mesure a aussi corrigé deux erreurs indépendantes : le palier Quick Start s'arrondit
-au supérieur (à 20 % de 95/59/51 le jeu accorde 19/12/11, ce que seul `ceil` reproduit), et
-`baseRate()` doit inclure le bonus de la recherche `base` — sans quoi `mult()`, défini comme
-`permRate / baseRate`, l'absorbe et le compte une seconde fois.
+Le plancher hors ligne n'applique que les bonus **personnels et permanents** (recherche
+`income`) : les boosts **globaux** (Collective Synergy, agrégée entre joueurs connectés) ne
+s'appliquent pas hors ligne. Le palier Quick Start s'arrondit systématiquement **au
+supérieur**, et le bonus de la recherche `base` est compté une seule fois dans le calcul du
+plancher.
 
 `offlineResearch` et `dailyBonus` rapportent des **points**, pas de l'énergie — elles se
 comparent dans leur propre monnaie (points gagnés par jour et par point investi) plutôt que
@@ -109,34 +99,26 @@ pour ne pas laisser de points dormir.
 
 ## Comment il choisit — Factory
 
-Depuis la mise à jour du 03/09, une troisième monnaie s'ajoute : les **Power Cells**.
-`Reactor` en génère en continu (part de la production), `Warehouse` plafonne le stock,
-`Refinery` convertit tout le stock en points de recherche au reset. Formules extraites du
-bundle du jeu et vérifiées sur deux achats réels : `reactor` 0,001+0,0001×niveau (part de
-production), `warehouse` 1200+240×niveau (plafond), `refinery` 0,1+0,01×niveau (taux de
-conversion).
+Une troisième monnaie : les **Power Cells**. `Reactor` en génère en continu (part de la
+production), `Warehouse` plafonne le stock, `Refinery` convertit tout le stock en points de
+recherche au reset.
 
 `warehouse` et `refinery` se départagent au critère direct (points de recherche par jour et
 par Power Cell investie) : ils augmentent la récolte du prochain reset, leur valeur est
-immédiate.
+immédiate. Ils sont évalués sur le stock et le temps **réels** restants avant le reset (pas
+une journée pleine fictive) — un achat sans le temps de se remplir avant le reset ne vaut
+rien, ce qui fait épargner naturellement en fin de cycle, sans seuil arbitraire à régler.
+Cette évaluation est recalculée à chaque état reçu.
 
 `reactor` est un cas à part : il ne rapporte **rien** directement, il finance les autres en
 accélérant la production de Power Cells. Un critère instantané le noterait toujours à zéro
 et il ne serait jamais acheté. Il est donc valorisé par **simulation de branches** comme
 `quickStart` et `costReduction` : le script déroule 30 jours de jeu avec et sans le niveau
-supplémentaire, et compare les points de recherche réellement produits. Vérifié hors ligne
-sur 192 configurations : une formule à horizon fixe se trompait de décision une fois sur
-deux, jusqu'à recommander `reactor` là où son gain réel était négatif (−15,5 % de production
-sur 30 jours en partant de zéro).
+supplémentaire, et compare les points de recherche réellement produits. Cette simulation est
+coûteuse (~5 ms) et sans lien avec l'horaire du reset : elle est mise en cache 1×/minute.
 
-Deux garde-fous issus de la même analyse : une cible plus chère que la capacité maximale du
-`warehouse` est écartée (elle ne serait jamais payable, et le script épargnerait à vide
-pendant que le stock déborde — 95 % de la production perdue) ; et `warehouse`/`refinery`
-sont évalués sur le stock et le temps **réels** restants avant le reset (pas une journée
-pleine fictive) — un achat sans le temps de se remplir avant le reset ne vaut rien, ce qui
-fait épargner naturellement en fin de cycle, sans seuil arbitraire à régler. Seule cette
-partie est recalculée à chaque état : la branche `reactor`, sans lien avec l'horaire du
-reset, reste mise en cache 1×/minute.
+Une cible plus chère que la capacité maximale du `warehouse` est écartée du classement : elle
+ne serait jamais payable, et le script épargnerait indéfiniment pendant que le stock déborde.
 
 ## Coût réseau
 
@@ -167,7 +149,7 @@ En haut du fichier :
 | `WAIT_WEIGHT` | 24 | poids de l'attente dans le score des upgrades |
 | `OFFLINE_DAYS_PER_WEEK` | 2.5 | rythme de déconnexion estimé, influence le classement d'`offline` |
 | `OFFLINE_CAP_HOURS` | 12 | plafond de durée créditée hors ligne (confirmé par le jeu) |
-| `OFFLINE_BASE_RATIO` | 0.50 | socle de la part créditée hors ligne, hors bonus de recherche (infobulle du jeu, confirmé exact) |
+| `OFFLINE_BASE_RATIO` | 0.50 | socle de la part créditée hors ligne, hors bonus de recherche |
 | `WATCHDOG_MS` | 60000 | délai avant d'aller chercher l'état soi-même |
 
 ## Limites connues
