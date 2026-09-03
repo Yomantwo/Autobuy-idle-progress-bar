@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      5.6.1
+// @version      6.1.1
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
-// @match        https://idle-progress-bar-mmo.vercel.app/*
+// @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -30,18 +30,18 @@
   // Plafond dur confirmé par l'infobulle du jeu : au-delà de 12 h le hors ligne ne rapporte
   // plus rien, quelle que soit la durée réelle de la coupure.
   const OFFLINE_CAP_HOURS = 12;
-  // Socle de la part créditée hors ligne, hors bonus de recherche. Valeur du jeu (infobulle),
-  // confirmée exacte le 27/08 une fois offlineMult() corrigé (voir plus bas) : 12 h hors ligne
-  // à 246,44 ⚡/s (plancher SANS la synergie collective) × 0,58 = 6 174 801, écart 0,000 %.
+  // Socle de la part créditée hors ligne (infobulle du jeu), confirmé exact le 27/08 : voir
+  // offlineMult() plus bas — mesure réelle à 0,000 % d'écart une fois les boosts globaux exclus.
   const OFFLINE_BASE_RATIO = 0.50;
 
   // Production apportée par un niveau de chaque générateur (avant multiplicateurs).
   const GEN = { auto: 1, advanced: 5, generatorMk3: 10 };
-  // Recherches achetées en priorité tant que non maxées : bonus flats sans alternative
-  // valable. Déjà maxées sur ce compte, conservé au cas où.
-  const RESEARCH_PRIORITY = ['generatorMk3', 'box'];
-  // Toutes les autres recherches départagées par un critère unique : ⚡/jour par point investi
-  // (RESEARCH_GAIN). Le classement s'auto-organise sans ordre codé en dur.
+  // Déblocages uniques (maxLevel 1) achetés en priorité : leur gain n'est pas de l'énergie,
+  // le classement ⚡/point les sous-évaluerait. factory ouvre tout le circuit Power Cells.
+  const RESEARCH_PRIORITY = ['generatorMk3', 'factory', 'box'];
+  // autoBuy absente volontairement de tout gainMap : elle taxe les upgrades de +25% sans rien
+  // apporter que ce script ne fasse déjà mieux.
+
   // Points/heure gagnés hors ligne au plein tarif, mesuré le 22-23/08 (877 pts / 14,3 h à 15 %
   // de part) : sert à valoriser offlineResearch.
   const OFFLINE_PTS_PER_HOUR = 408;
@@ -56,7 +56,9 @@
     base: 'Base Production', income: 'Production boost', synergy: 'Collective Synergy',
     dailyBonus: 'Daily Bonus Booster', offline: 'Offline Production',
     offlineResearch: 'Offline Research', generatorMk3: 'Generator MK3', box: 'Box Sensor',
+    tierResonance: 'Tier Resonance', factory: 'Factory Access',
   };
+  const LABELS_FACTORY = { reactor: 'Reactor', warehouse: 'Warehouse', refinery: 'Refinery' };
   const READY = '#22c55e';  // vert : achetable maintenant
   const WAIT  = '#f59e0b';  // orange : meilleure cible, pas encore abordable
   // --------------------------------
@@ -100,8 +102,7 @@
   };
 
   // ---------- Modèle de production ----------
-  // Production de base, avant multiplicateurs. Inclut le bonus de la recherche base : sinon
-  // mult() (= permRate/baseRate) l'absorbe, et floorRate() qui l'ajoute le compte deux fois.
+  // Inclut le bonus base : sinon mult() (= permRate/baseRate) l'absorbe et floorRate() le recompte.
   const baseRate = p => Object.entries(GEN)
     .reduce((s, [k, v]) => s + v * (p.upgrades[k] ? p.upgrades[k].level : 0),
       p.basePassiveRate + p.research.base.bonusValue);
@@ -257,15 +258,10 @@
   // ---------- Recherches ----------
   // Secondes hors ligne par jour en moyenne, d'après le rythme déclaré.
   const offlineSecPerDay = () => OFFLINE_DAYS_PER_WEEK * OFFLINE_CAP_HOURS * 3600 / 7;
-  // Part de la production créditée hors ligne : socle + 1 point par niveau (confirmé par
-  // l'infobulle du jeu, et vérifié à 0,000 % d'écart sur une mesure réelle une fois offlineMult
-  // corrigé ci-dessous).
+  // Part de la production créditée hors ligne : socle (infobulle) + 1 point par niveau.
   const offlineRatio = p => OFFLINE_BASE_RATIO + 0.01 * p.research.offline.level;
-  // Multiplicateur qui s'applique hors ligne : uniquement les bonus PERSONNELS et permanents
-  // (recherche income). Le dev confirme que les boosts GLOBAUX (Collective Synergy, qui agrège
-  // le niveau de tous les joueurs connectés) ne s'appliquent pas hors ligne — contrairement à
-  // mult(p), qui les inclut tous sans distinction. Vérifié exact sur une mesure réelle (12 h,
-  // 6,17 M ⚡) : mult(p) donnait 38 % d'erreur, offlineMult(p) 0,000 %.
+  // Bonus PERSONNEL seul (income) : le dev confirme que les boosts GLOBAUX (Collective
+  // Synergy, agrégée entre joueurs) ne s'appliquent pas hors ligne, contrairement à mult(p).
   const offlineMult = p => 1 + 0.01 * p.research.income.level;
   // Palier garanti par Quick Start sur MK1/MK2/MK3 : pct × meilleur niveau jamais atteint.
   // ceil, pas floor : à 20 % de 95/59/51 le jeu accorde 19/12/11, seul ceil reproduit les trois.
@@ -290,6 +286,13 @@
     // +1 %/niveau de production, actif en permanence (descriptions du jeu).
     income:  p => permRate(p) * 0.01 * 86400,
     synergy: p => permRate(p) * 0.01 * 86400,
+    // +1 %/tier atteint, plafonné à 5×niveau tiers comptés (formule confirmée dans le bundle
+    // du jeu) : rendements décroissants une fois le plafond au-delà de maxTierReached.
+    tierResonance: p => {
+      const lvl = p.research.tierResonance.level;
+      const bonus = l => 0.01 * Math.min(p.maxTierReached, 5 * l);
+      return permRate(p) * (bonus(lvl + 1) - bonus(lvl)) * 86400;
+    },
     // +1 à la production de base : agit sur le cycle actif ET sur le plancher hors ligne.
     base: p => mult(p) * 86400
       + offlineMult(p) * offlineSecPerDay() * offlineRatio(p),
@@ -357,9 +360,104 @@
     return bestScored(p, POINTS_GAIN, true);
   };
 
+  // ---------- Factory ----------
+  // Débit déduit de bonusValue, pas recalculé : le jeu le base sur la production HORS bonus.
+  const factoryBaseRate = p => p.factory.reactor.bonusValue / (0.001 + 0.0001 * p.factory.reactor.level);
+  // Coûts linéaires (bundle du jeu, vérifiés sur achats réels) : reactor +136/niv,
+  // warehouse +208/niv, refinery +328/niv.
+  const FACTORY_SLOPE = { reactor: 136, warehouse: 208, refinery: 328 };
+  const factoryCap = Lw => 1200 + 240 * Lw;
+  const factoryConv = Lf => 0.1 + 0.01 * Lf;
+  const factoryRpAt = (baseRate, Lw, Lf, Lr) =>
+    Math.min(factoryCap(Lw), baseRate * (0.001 + 0.0001 * Lr) * 86400) * factoryConv(Lf);
+
+  // Simulation de branches sur 30 jours, événementielle : on saute d'un achat au suivant au
+  // lieu d'avancer seconde par seconde (~700 pas au lieu de 2,6 M, résultat équivalent).
+  const FACTORY_SIM_DAYS = 30;
+  const factorySimulate = (p, dCost, dType) => {
+    const baseRate = factoryBaseRate(p);
+    const cost0 = {};
+    for (const t of ['reactor', 'warehouse', 'refinery']) cost0[t] = p.factory[t].cost - FACTORY_SLOPE[t] * p.factory[t].level;
+    const cost = (t, L) => cost0[t] + FACTORY_SLOPE[t] * L;
+    const L = { reactor: p.factory.reactor.level, warehouse: p.factory.warehouse.level, refinery: p.factory.refinery.level };
+    if (dType) L[dType]++;
+    // Meilleur achat du moment. Écarte toute cible plus chère que la capacité : elle ne serait
+    // JAMAIS payable et le script épargnerait à vide pendant que le stock déborde.
+    const bestBuy = () => {
+      const cur = factoryRpAt(baseRate, L.warehouse, L.refinery, L.reactor);
+      let best = null;
+      for (const t of ['warehouse', 'refinery']) {
+        const c = cost(t, L[t]); if (c > factoryCap(L.warehouse)) continue;
+        const nx = t === 'warehouse' ? factoryRpAt(baseRate, L.warehouse + 1, L.refinery, L.reactor)
+          : factoryRpAt(baseRate, L.warehouse, L.refinery + 1, L.reactor);
+        const sc = (nx - cur) / c; if (!best || sc > best.sc) best = { t, c, sc };
+      }
+      return best;
+    };
+    let stock = p.powerCells - dCost, rpTotal = 0, t = 0, guard = 0;
+    const T = FACTORY_SIM_DAYS * 86400;
+    while (t < T && ++guard < 20000) {
+      let b;
+      while ((b = bestBuy()) && b.c <= stock) { stock -= b.c; L[b.t]++; }
+      const rate = baseRate * (0.001 + 0.0001 * L.reactor);
+      const cap = factoryCap(L.warehouse);
+      let dt = 86400 - (t % 86400);
+      if (b && rate > 0) dt = Math.min(dt, Math.max(0, (b.c - stock) / rate));
+      stock = Math.min(cap, stock + rate * dt);
+      t += dt;
+      if (t % 86400 < 1e-6 || t >= T) {
+        rpTotal += Math.min(stock, cap) * factoryConv(L.refinery);
+        stock = 0;
+        t = Math.ceil(t / 86400 - 1e-9) * 86400;
+      }
+    }
+    return rpTotal;
+  };
+  // warehouse/refinery au stock et au temps RÉELS avant reset (pas une journée pleine fictive) :
+  // sans le temps de se remplir avant le reset, un achat ne vaut rien, d'où l'épargne naturelle en fin de cycle.
+  const factoryDirectTarget = p => {
+    const secToReset = msToReset() / 1000;
+    const rate = factoryBaseRate(p) * (0.001 + 0.0001 * p.factory.reactor.level);
+    const projected = (Lw, Lf, stock) => Math.min(factoryCap(Lw), stock + rate * secToReset) * factoryConv(Lf);
+    const cur = projected(p.factory.warehouse.level, p.factory.refinery.level, p.powerCells);
+    let best = null;
+    for (const t of ['warehouse', 'refinery']) {
+      const c = p.factory[t].cost;
+      if (c > p.powerCellsCapacity) continue;
+      const nx = t === 'warehouse'
+        ? projected(p.factory.warehouse.level + 1, p.factory.refinery.level, p.powerCells - c)
+        : projected(p.factory.warehouse.level, p.factory.refinery.level + 1, p.powerCells - c);
+      const score = (nx - cur) / c;
+      if (score > 0 && (!best || score > best.score)) best = { type: t, cost: c, score };
+    }
+    return best;
+  };
+  // reactor ne rapporte rien directement : seule une branche simulée sur 30j révèle sa valeur.
+  // Coûteux (~5ms), mis en cache 1×/minute — sans lien avec le reset, pas concerné ci-dessus.
+  const FACTORY_REFRESH_MS = 60000;
+  let factoryReactorCache = null;
+  const factoryReactorScore = p => {
+    const now = Date.now();
+    if (factoryReactorCache && now - factoryReactorCache.at < FACTORY_REFRESH_MS) return factoryReactorCache.score;
+    const c = p.factory.reactor.cost;
+    const score = c <= p.powerCellsCapacity ? (factorySimulate(p, c, 'reactor') - factorySimulate(p, 0, null)) / c : -Infinity;
+    factoryReactorCache = { at: now, score };
+    return score;
+  };
+  const factoryTarget = p => {
+    let best = factoryDirectTarget(p);
+    const rScore = factoryReactorScore(p);
+    if (rScore > 0 && (!best || rScore > best.score)) best = { type: 'reactor', cost: p.factory.reactor.cost, score: rScore };
+    return best;
+  };
+  // Comme researchPurchase : on épargne plutôt que se rabattre sur un moins bon abordable.
+  const factoryPurchase = p => {
+    const t = factoryTarget(p);
+    return (t && t.cost <= p.powerCells) ? t : null;
+  };
+
   // ---------- Surlignage ----------
-  // Styles inline : survivent aux re-renders React. Cartes visibles uniquement (offsetParent
-  // non nul) : MK3 existe en upgrade ET en recherche, sinon mauvaise carte surlignée.
+  // Styles inline (survit aux re-renders) ; MK3 existe en upgrade ET recherche, filtrer par carte visible.
   let marked = null;
   const cardOf = label => {
     for (const el of document.querySelectorAll('p.font-semibold')) {
@@ -375,6 +473,7 @@
   const getActiveTab = () =>
     cardOf('Cost Reduction') ? 'upgrades'
     : cardOf('Collective Synergy') ? 'research'
+    : cardOf('Reactor') ? 'factory'
     : null;
   const clearMark = () => {
     if (!marked) return;
@@ -419,6 +518,7 @@
       <div id="ab-target" style="color:#e2e8f0">—</div>
       <div id="ab-hold" style="color:#64748b;font-size:11px"></div>
       <div id="ab-research" style="color:#94a3b8;font-size:11px"></div>
+      <div id="ab-factory" style="color:#94a3b8;font-size:11px"></div>
       <div id="ab-box" style="cursor:pointer;color:#94a3b8" title="Cliquer pour activer/désactiver le ramassage des boîtes"></div>
       <div id="ab-net" style="color:#475569;font-size:11px"></div>
       <div id="ab-log" style="margin-top:4px;padding-top:6px;border-top:1px solid #1e293b;color:#64748b;min-height:52px"></div>
@@ -494,11 +594,20 @@
         + (rAfford ? '' : ' · ⏸')
       : '🔬 rien à chercher';
 
+    const ft = p.factory ? factoryTarget(p) : null;
+    const fAfford = ft && ft.cost <= p.powerCells;
+    $('factory').innerHTML = ft
+      ? `🏭 <span style="color:${fAfford ? READY : WAIT}">${LABELS_FACTORY[ft.type]}</span>`
+        + ` · ${fmt(ft.cost)} (${fmt(p.powerCells)} 🔋)`
+        + (fAfford ? '' : ' · ⏸')
+      : '';
+
     // Le surlignage suit l'onglet affiché : upgrade cible sur UPGRADES, recherche cible
     // sur RESEARCH, rien sur STORE ou si l'onglet actif n'est pas identifiable.
     const tab = getActiveTab();
     if (tab === 'upgrades' && best) mark(LABELS[best.type] || best.type, ready);
     else if (tab === 'research' && rt) mark(LABELS_RESEARCH[rt.type] || rt.type, rAfford);
+    else if (tab === 'factory' && ft) mark(LABELS_FACTORY[ft.type], fAfford);
     else clearMark();
   };
 
@@ -541,7 +650,8 @@
 
         const { pick, qty } = plan(p);
         const re = AUTO_RESEARCH ? researchPurchase(p) : null;
-        if (!pick && !re) break;
+        const fa = p.factory ? factoryPurchase(p) : null;
+        if (!pick && !re && !fa) break;
 
         if (pick) {
           const res = await post('/api/upgrade', { type: pick.type, quantity: qty });
@@ -553,6 +663,11 @@
           const res = await post('/api/research', { type: re.type, quantity: 1 });
           p = res.player;
           addLog(`🔬 ${LABELS_RESEARCH[re.type] || re.type} → niv.${p.research[re.type].level}`);
+        }
+        if (fa) {
+          const res = await post('/api/factory', { type: fa.type, quantity: 1 });
+          p = res.player;
+          addLog(`🏭 ${LABELS_FACTORY[fa.type]} → niv.${p.factory[fa.type].level}`);
         }
         adopt(p); // l'espacement des requêtes est assuré par gate()
       }
@@ -571,8 +686,7 @@
   };
 
   // ---------- Interception ----------
-  // La page poll déjà /api/state toutes les 3 s : on lit ses réponses au passage, zéro
-  // requête de lecture ajoutée.
+  // La page poll déjà /api/state toutes les 3 s : on lit ses réponses au passage, zéro lecture ajoutée.
   window.fetch = async (...args) => {
     const res = await origFetch(...args);
     try {
@@ -596,5 +710,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v5.6.1 chargé — lecture passive du polling de la page');
+  console.log('autobuy v6.1.1 chargé — lecture passive du polling de la page');
 })();

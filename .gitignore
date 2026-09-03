@@ -1,11 +1,14 @@
 ﻿node_modules/
 *.log
 
-# Donnees personnelles de compte / etat de partie
+# Donnees personnelles de compte / etat de partie (un jeu de fichiers par joueur)
 state.json
-state_prev.json
-state_boot.json
+state_*.json
 mesures/
+
+# Scripts d analyse ad hoc (dependent d un state.json reel, non destines a etre publies)
+test-charge.js
+tmp-analysis/
 
 # Outils prives (capture d etat, jamais partages)
 idle-state-push.user.js

@@ -1,6 +1,6 @@
 # Idle Progress Bar MMO — Auto Buy
 
-Userscript Tampermonkey pour [Idle Progress Bar MMO](https://idle-progress-bar-mmo.vercel.app/).
+Userscript Tampermonkey pour [Idle Progress Bar MMO](https://ipb-mmo.ereldev.com/).
 Il surligne l'upgrade et la recherche les plus rentables directement dans le jeu, les achète
 automatiquement, et ramasse les boîtes dès qu'elles apparaissent.
 
@@ -27,6 +27,7 @@ compte et n'importe quel stade de partie.
 → Generator MK3 · ⚡56,05M · 2h59
 ≈ 182M produits d'ici le reset · ⏸ épargne
 🔬 Production boost · 3 764 (2 057 dispo)
+🏭 Warehouse · 2 032 (455 🔋) · ⏸
 📦 boîtes : AUTO · 43 ramassées
 🔌 état reçu il y a 2s · 0 req. ajoutées
 ⚡ Generator MK1 ×4 → niv.91
@@ -35,6 +36,10 @@ compte et n'importe quel stade de partie.
 
 - **ON/OFF** ne pilote que les achats. L'analyse et le surlignage tournent en permanence,
   ce qui permet de s'en servir comme simple assistant visuel en jouant à la main.
+- Le surlignage suit l'onglet affiché : upgrade cible sur **UPGRADES**, recherche sur
+  **RESEARCH**, bâtiment sur **FACTORY**. Vert = achetable, orange = on épargne.
+- La ligne 🏭 n'apparaît qu'une fois `Factory Access` recherchée ; elle affiche le bâtiment
+  visé et le stock de Power Cells disponible.
 - **📦 boîtes** se bascule indépendamment (clic sur la ligne).
 - Les deux réglages sont mémorisés dans `localStorage`.
 - **–** replie le panneau.
@@ -71,6 +76,15 @@ montent (+15 %/niveau), sans ordre codé en dur.
   (proportionnel au meilleur niveau jamais atteint, arrondi **au supérieur**) ; valorisée
   par simulation de branches, comme Cost Reduction, parce que son effet déplace le point de
   départ de toute la journée plutôt que d'ajouter un simple pourcentage.
+- `tierResonance` : +1 %/tier atteint, plafonné à 5×niveau tiers comptés (formule lue dans
+  le bundle du jeu). Rendements décroissants une fois le plafond au-delà du tier réel — le
+  gain marginal retombe à 0 jusqu'à ce que `maxTierReached` progresse, sans exclusion codée
+  en dur : le classement se corrige tout seul.
+
+`autoBuy` n'est jamais achetée, volontairement : elle débloque un auto-achat natif du jeu
+qui augmente le coût de tous les upgrades de 25 % tant qu'il est actif, sans rien apporter
+que ce script ne fasse déjà — en mieux (rythme adaptatif au lieu d'un rachat fixe toutes les
+60 s, sans le surcoût).
 
 ### Calibration du hors ligne
 
@@ -92,6 +106,37 @@ au supérieur (à 20 % de 95/59/51 le jeu accorde 19/12/11, ce que seul `ceil` r
 comparent dans leur propre monnaie (points gagnés par jour et par point investi) plutôt que
 d'être converties arbitrairement, et servent de repli quand rien d'autre n'est abordable
 pour ne pas laisser de points dormir.
+
+## Comment il choisit — Factory
+
+Depuis la mise à jour du 03/09, une troisième monnaie s'ajoute : les **Power Cells**.
+`Reactor` en génère en continu (part de la production), `Warehouse` plafonne le stock,
+`Refinery` convertit tout le stock en points de recherche au reset. Formules extraites du
+bundle du jeu et vérifiées sur deux achats réels : `reactor` 0,001+0,0001×niveau (part de
+production), `warehouse` 1200+240×niveau (plafond), `refinery` 0,1+0,01×niveau (taux de
+conversion).
+
+`warehouse` et `refinery` se départagent au critère direct (points de recherche par jour et
+par Power Cell investie) : ils augmentent la récolte du prochain reset, leur valeur est
+immédiate.
+
+`reactor` est un cas à part : il ne rapporte **rien** directement, il finance les autres en
+accélérant la production de Power Cells. Un critère instantané le noterait toujours à zéro
+et il ne serait jamais acheté. Il est donc valorisé par **simulation de branches** comme
+`quickStart` et `costReduction` : le script déroule 30 jours de jeu avec et sans le niveau
+supplémentaire, et compare les points de recherche réellement produits. Vérifié hors ligne
+sur 192 configurations : une formule à horizon fixe se trompait de décision une fois sur
+deux, jusqu'à recommander `reactor` là où son gain réel était négatif (−15,5 % de production
+sur 30 jours en partant de zéro).
+
+Deux garde-fous issus de la même analyse : une cible plus chère que la capacité maximale du
+`warehouse` est écartée (elle ne serait jamais payable, et le script épargnerait à vide
+pendant que le stock déborde — 95 % de la production perdue) ; et `warehouse`/`refinery`
+sont évalués sur le stock et le temps **réels** restants avant le reset (pas une journée
+pleine fictive) — un achat sans le temps de se remplir avant le reset ne vaut rien, ce qui
+fait épargner naturellement en fin de cycle, sans seuil arbitraire à régler. Seule cette
+partie est recalculée à chaque état : la branche `reactor`, sans lien avec l'horaire du
+reset, reste mise en cache 1×/minute.
 
 ## Coût réseau
 
