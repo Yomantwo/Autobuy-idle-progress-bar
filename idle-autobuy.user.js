@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.0.0
+// @version      3.1.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -363,27 +363,32 @@
   // ---------- Factory ----------
   // Débit déduit de bonusValue, pas recalculé : le jeu le base sur la production HORS bonus.
   const factoryBaseRate = p => p.factory.reactor.bonusValue / (0.001 + 0.0001 * p.factory.reactor.level);
-  // Coûts linéaires (bundle du jeu, vérifiés sur achats réels) : reactor +136/niv,
-  // warehouse +208/niv, refinery +328/niv.
-  const FACTORY_SLOPE = { reactor: 136, warehouse: 208, refinery: 328 };
-  const factoryCap = Lw => 1200 + 240 * Lw;
-  const factoryConv = Lf => 0.1 + 0.01 * Lf;
+  // Coûts linéaires (bundle du jeu, vérifiés sur achats réels le 04/09) : reactor +326/niv,
+  // warehouse +500/niv, refinery +788/niv.
+  const FACTORY_SLOPE = { reactor: 326, warehouse: 500, refinery: 788 };
+  const factoryCap = Lw => 2880 + 576 * Lw;
+  // Refinery plafonne désormais à 30% (rendements décroissants), fini le +1%/niveau infini.
+  const factoryConv = Lf => 0.1 + 0.2 * (1 - Math.pow(0.95, Lf));
   const factoryRpAt = (baseRate, Lw, Lf, Lr) =>
     Math.min(factoryCap(Lw), baseRate * (0.001 + 0.0001 * Lr) * 86400) * factoryConv(Lf);
 
-  // Simulation de branches sur 30 jours, événementielle : on saute d'un achat au suivant au
-  // lieu d'avancer seconde par seconde (~700 pas au lieu de 2,6 M, résultat équivalent).
+  // Simulation de branches sur 30j. reactorTarget force reactor jusqu'à la cible : un score
+  // marginal (+1 niveau) reste toujours nul, aveugle à l'effet cumulé sur le remplissage.
   const FACTORY_SIM_DAYS = 30;
-  const factorySimulate = (p, dCost, dType) => {
+  const factorySimulate = (p, dCost, dType, reactorTarget) => {
     const baseRate = factoryBaseRate(p);
     const cost0 = {};
     for (const t of ['reactor', 'warehouse', 'refinery']) cost0[t] = p.factory[t].cost - FACTORY_SLOPE[t] * p.factory[t].level;
     const cost = (t, L) => cost0[t] + FACTORY_SLOPE[t] * L;
     const L = { reactor: p.factory.reactor.level, warehouse: p.factory.warehouse.level, refinery: p.factory.refinery.level };
     if (dType) L[dType]++;
-    // Meilleur achat du moment. Écarte toute cible plus chère que la capacité : elle ne serait
-    // JAMAIS payable et le script épargnerait à vide pendant que le stock déborde.
+    // Écarte toute cible plus chère que la capacité : elle ne serait JAMAIS payable et le
+    // script épargnerait à vide pendant que le stock déborde.
     const bestBuy = () => {
+      if (reactorTarget && L.reactor < reactorTarget) {
+        const c = cost('reactor', L.reactor);
+        if (c <= factoryCap(L.warehouse)) return { t: 'reactor', c };
+      }
       const cur = factoryRpAt(baseRate, L.warehouse, L.refinery, L.reactor);
       let best = null;
       for (const t of ['warehouse', 'refinery']) {
@@ -396,7 +401,7 @@
     };
     let stock = p.powerCells - dCost, rpTotal = 0, t = 0, guard = 0;
     const T = FACTORY_SIM_DAYS * 86400;
-    while (t < T && ++guard < 20000) {
+    while (t < T && ++guard < 50000) {
       let b;
       while ((b = bestBuy()) && b.c <= stock) { stock -= b.c; L[b.t]++; }
       const rate = baseRate * (0.001 + 0.0001 * L.reactor);
@@ -432,23 +437,38 @@
     }
     return best;
   };
-  // reactor ne rapporte rien directement : seule une branche simulée sur 30j révèle sa valeur.
-  // Coûteux (~5ms), mis en cache 1×/minute — sans lien avec le reset, pas concerné ci-dessus.
+  // Palier d'engagement pour reactor : paliers géométriques + raffinement, pas un scan fin
+  // (instable, ±20% entre niveaux voisins). Coûteux (~14 simulations), caché 1×/minute.
   const FACTORY_REFRESH_MS = 60000;
   let factoryReactorCache = null;
-  const factoryReactorScore = p => {
+  const factoryReactorTarget = p => {
     const now = Date.now();
-    if (factoryReactorCache && now - factoryReactorCache.at < FACTORY_REFRESH_MS) return factoryReactorCache.score;
-    const c = p.factory.reactor.cost;
-    const score = c <= p.powerCellsCapacity ? (factorySimulate(p, c, 'reactor') - factorySimulate(p, 0, null)) / c : -Infinity;
-    factoryReactorCache = { at: now, score };
-    return score;
+    if (factoryReactorCache && now - factoryReactorCache.at < FACTORY_REFRESH_MS) return factoryReactorCache.target;
+    const L0r = p.factory.reactor.level;
+    let best = { target: 0, tot: factorySimulate(p, 0, null, 0) };
+    for (const f of [0.25, 0.5, 1, 2, 4, 8, 16, 32]) {
+      const target = Math.round(Math.max(L0r, 50) * (1 + f));
+      const tot = factorySimulate(p, 0, null, target);
+      if (tot > best.tot) best = { target, tot };
+    }
+    const span = Math.max(50, Math.round(best.target * 0.15));
+    for (const d of [-2, -1, 1, 2]) {
+      const target = Math.max(L0r, best.target + d * span);
+      const tot = factorySimulate(p, 0, null, target);
+      if (tot > best.tot) best = { target, tot };
+    }
+    factoryReactorCache = { at: now, target: best.target > L0r ? best.target : null };
+    return factoryReactorCache.target;
   };
+  // Tant qu'un palier reactor est en cours (pas encore atteint), il passe devant
+  // warehouse/refinery — c'est ce qu'a validé la simulation, pas un simple score comparé.
   const factoryTarget = p => {
-    let best = factoryDirectTarget(p);
-    const rScore = factoryReactorScore(p);
-    if (rScore > 0 && (!best || rScore > best.score)) best = { type: 'reactor', cost: p.factory.reactor.cost, score: rScore };
-    return best;
+    const rTarget = factoryReactorTarget(p);
+    if (rTarget && p.factory.reactor.level < rTarget) {
+      const c = p.factory.reactor.cost;
+      if (c <= p.powerCellsCapacity) return { type: 'reactor', cost: c, score: Infinity };
+    }
+    return factoryDirectTarget(p);
   };
   // Comme researchPurchase : on épargne plutôt que se rabattre sur un moins bon abordable.
   const factoryPurchase = p => {
@@ -710,5 +730,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.0.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.1.0 chargé — lecture passive du polling de la page');
 })();

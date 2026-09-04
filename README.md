@@ -111,11 +111,13 @@ rien, ce qui fait épargner naturellement en fin de cycle, sans seuil arbitraire
 Cette évaluation est recalculée à chaque état reçu.
 
 `reactor` est un cas à part : il ne rapporte **rien** directement, il finance les autres en
-accélérant la production de Power Cells. Un critère instantané le noterait toujours à zéro
-et il ne serait jamais acheté. Il est donc valorisé par **simulation de branches** comme
-`quickStart` et `costReduction` : le script déroule 30 jours de jeu avec et sans le niveau
-supplémentaire, et compare les points de recherche réellement produits. Cette simulation est
-coûteuse (~5 ms) et sans lien avec l'horaire du reset : elle est mise en cache 1×/minute.
+accélérant la production de Power Cells. Un score marginal (+1 niveau) le note toujours à
+zéro — l'effet ne devient visible qu'après un engagement plus large, en permettant d'enchaîner
+plus de cycles d'achat par jour. Il est donc valorisé par une **recherche de palier** : le
+script simule 30 jours de jeu pour plusieurs niveaux cibles espacés géométriquement, retient
+le meilleur, puis raffine autour de lui — et poursuit ce palier en priorité tant qu'il n'est
+pas atteint. Coûteux (une quinzaine de simulations), mis en cache 1×/minute, sans lien avec
+l'horaire du reset.
 
 Une cible plus chère que la capacité maximale du `warehouse` est écartée du classement : elle
 ne serait jamais payable, et le script épargnerait indéfiniment pendant que le stock déborde.
