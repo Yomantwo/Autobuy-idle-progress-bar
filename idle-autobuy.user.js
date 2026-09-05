@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.1.0
+// @version      3.2.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -470,10 +470,14 @@
     }
     return factoryDirectTarget(p);
   };
-  // Comme researchPurchase : on épargne plutôt que se rabattre sur un moins bon abordable.
+  // Réserve avant reset étendue à toute cible (reactor compris) : sans elle, reactor vidait
+  // le stock juste avant chaque reset au lieu de le laisser se convertir.
   const factoryPurchase = p => {
     const t = factoryTarget(p);
-    return (t && t.cost <= p.powerCells) ? t : null;
+    if (!t || t.cost > p.powerCells) return null;
+    const rate = factoryBaseRate(p) * (0.001 + 0.0001 * p.factory.reactor.level);
+    if (rate > 0 && t.cost / rate > msToReset() / 1000) return null;
+    return t;
   };
 
   // ---------- Surlignage ----------
@@ -730,5 +734,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.1.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.2.0 chargé — lecture passive du polling de la page');
 })();

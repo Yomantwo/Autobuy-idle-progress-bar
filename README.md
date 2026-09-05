@@ -119,6 +119,10 @@ le meilleur, puis raffine autour de lui — et poursuit ce palier en priorité t
 pas atteint. Coûteux (une quinzaine de simulations), mis en cache 1×/minute, sans lien avec
 l'horaire du reset.
 
+La réserve avant reset s'applique à **tout** achat Factory, `reactor` compris : si le temps
+pour regagner ce qui serait dépensé dépasse ce qu'il reste avant le reset, le script épargne
+plutôt que de vider le stock juste avant qu'il ne se convertisse.
+
 Une cible plus chère que la capacité maximale du `warehouse` est écartée du classement : elle
 ne serait jamais payable, et le script épargnerait indéfiniment pendant que le stock déborde.
 
