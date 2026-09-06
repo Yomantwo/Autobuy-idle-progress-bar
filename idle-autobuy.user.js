@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.2.0
+// @version      3.2.1
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -363,6 +363,9 @@
   // ---------- Factory ----------
   // Débit déduit de bonusValue, pas recalculé : le jeu le base sur la production HORS bonus.
   const factoryBaseRate = p => p.factory.reactor.bonusValue / (0.001 + 0.0001 * p.factory.reactor.level);
+  // Débit courant réel (Power Cells/s) déduit du niveau reactor actuel. Factorisé ici : repris
+  // par factoryDirectTarget et factoryPurchase, qui avaient chacun leur propre copie de la formule.
+  const factoryRate = p => factoryBaseRate(p) * (0.001 + 0.0001 * p.factory.reactor.level);
   // Coûts linéaires (bundle du jeu, vérifiés sur achats réels le 04/09) : reactor +326/niv,
   // warehouse +500/niv, refinery +788/niv.
   const FACTORY_SLOPE = { reactor: 326, warehouse: 500, refinery: 788 };
@@ -422,7 +425,7 @@
   // sans le temps de se remplir avant le reset, un achat ne vaut rien, d'où l'épargne naturelle en fin de cycle.
   const factoryDirectTarget = p => {
     const secToReset = msToReset() / 1000;
-    const rate = factoryBaseRate(p) * (0.001 + 0.0001 * p.factory.reactor.level);
+    const rate = factoryRate(p);
     const projected = (Lw, Lf, stock) => Math.min(factoryCap(Lw), stock + rate * secToReset) * factoryConv(Lf);
     const cur = projected(p.factory.warehouse.level, p.factory.refinery.level, p.powerCells);
     let best = null;
@@ -470,13 +473,15 @@
     }
     return factoryDirectTarget(p);
   };
-  // Réserve avant reset étendue à toute cible (reactor compris) : sans elle, reactor vidait
-  // le stock juste avant chaque reset au lieu de le laisser se convertir.
+  // Réserve avant reset pour reactor seul : sans elle il vidait le stock juste avant chaque
+  // reset. warehouse/refinery ont déjà la leur dans factoryDirectTarget (projected()), sur le stock déjà là, pas une production future — même seuil bloquerait des achats rentables.
   const factoryPurchase = p => {
     const t = factoryTarget(p);
     if (!t || t.cost > p.powerCells) return null;
-    const rate = factoryBaseRate(p) * (0.001 + 0.0001 * p.factory.reactor.level);
-    if (rate > 0 && t.cost / rate > msToReset() / 1000) return null;
+    if (t.type === 'reactor') {
+      const rate = factoryRate(p);
+      if (rate > 0 && t.cost / rate > msToReset() / 1000) return null;
+    }
     return t;
   };
 
@@ -619,7 +624,9 @@
       : '🔬 rien à chercher';
 
     const ft = p.factory ? factoryTarget(p) : null;
-    const fAfford = ft && ft.cost <= p.powerCells;
+    // Reflète l'achat RÉEL (factoryPurchase), pas la simple affordabilité : sinon le panneau
+    // affichait « prêt » juste avant reset alors que la réserve reactor bloquait l'achat.
+    const fAfford = ft && !!(p.factory && factoryPurchase(p));
     $('factory').innerHTML = ft
       ? `🏭 <span style="color:${fAfford ? READY : WAIT}">${LABELS_FACTORY[ft.type]}</span>`
         + ` · ${fmt(ft.cost)} (${fmt(p.powerCells)} 🔋)`
@@ -734,5 +741,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.2.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.2.1 chargé — lecture passive du polling de la page');
 })();
