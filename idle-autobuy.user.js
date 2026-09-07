@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.3.0
+// @version      3.4.1
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -440,13 +440,15 @@
     }
     return best;
   };
-  // Palier d'engagement pour reactor : paliers géométriques + raffinement, pas un scan fin
-  // (instable, ±20% entre niveaux voisins). Coûteux (~14 simulations), caché 1×/minute.
-  const FACTORY_REFRESH_MS = 60000;
+  // Palier reactor : paliers géométriques + raffinement, pas un scan fin (instable, ±20% entre
+  // niveaux voisins). ~13 simulations de 30 j = ~34 ms : recalcul à l'expiration ou palier atteint.
+  const FACTORY_REFRESH_MS = 300000;
   let factoryReactorCache = null;
   const factoryReactorTarget = p => {
     const now = Date.now();
-    if (factoryReactorCache && now - factoryReactorCache.at < FACTORY_REFRESH_MS) return factoryReactorCache.target;
+    const c = factoryReactorCache;
+    if (c && now - c.at < FACTORY_REFRESH_MS && !(c.target && p.factory.reactor.level >= c.target))
+      return c.target;
     const L0r = p.factory.reactor.level;
     let best = { target: 0, tot: factorySimulate(p, 0, null, 0) };
     for (const f of [0.25, 0.5, 1, 2, 4, 8, 16, 32]) {
@@ -741,5 +743,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.3.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.4.1 chargé — lecture passive du polling de la page');
 })();

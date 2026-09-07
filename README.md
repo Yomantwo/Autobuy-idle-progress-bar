@@ -110,18 +110,19 @@ une journée pleine fictive) — un achat sans le temps de se remplir avant le r
 rien, ce qui fait épargner naturellement en fin de cycle, sans seuil arbitraire à régler.
 Cette évaluation est recalculée à chaque état reçu.
 
-`reactor` est un cas à part : il ne rapporte **rien** directement, il finance les autres en
-accélérant la production de Power Cells. Un score marginal (+1 niveau) le note toujours à
-zéro — l'effet ne devient visible qu'après un engagement plus large, en permettant d'enchaîner
-plus de cycles d'achat par jour. Il est donc valorisé par une **recherche de palier** : le
-script simule 30 jours de jeu pour plusieurs niveaux cibles espacés géométriquement, retient
-le meilleur, puis raffine autour de lui — et poursuit ce palier en priorité tant qu'il n'est
-pas atteint. Coûteux (une quinzaine de simulations), mis en cache 1×/minute, sans lien avec
-l'horaire du reset.
+`reactor` est un cas à part : il produit bien des Power Cells (une part de la production
+d'énergie), mais **aucun point de recherche** directement — il finance les deux autres. Dès
+que la production dépasse la capacité du `warehouse`, un score marginal (+1 niveau) le note à
+zéro, alors qu'il détermine le budget d'achat de toute la journée. Il est donc valorisé par
+une **recherche de palier** : le script simule 30 jours de jeu pour plusieurs niveaux cibles
+espacés géométriquement, retient le meilleur, puis raffine autour de lui — et poursuit ce
+palier en priorité tant qu'il n'est pas atteint. Coûteux (une quinzaine de simulations),
+recalculé au plus toutes les 5 minutes ou dès que le palier est atteint.
 
-La réserve avant reset s'applique à **tout** achat Factory, `reactor` compris : si le temps
-pour regagner ce qui serait dépensé dépasse ce qu'il reste avant le reset, le script épargne
-plutôt que de vider le stock juste avant qu'il ne se convertisse.
+La réserve avant reset ne vise que `reactor` : si le temps pour regagner ce qui serait dépensé
+dépasse ce qu'il reste avant le reset, le script épargne plutôt que de vider le stock juste
+avant qu'il ne se convertisse. `warehouse` et `refinery` n'en ont pas besoin : leur score tient
+déjà compte du temps restant.
 
 Une cible plus chère que la capacité maximale du `warehouse` est écartée du classement : elle
 ne serait jamais payable, et le script épargnerait indéfiniment pendant que le stock déborde.

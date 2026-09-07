@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.1
+- Perf : palier reactor recalculé toutes les 5 min (au lieu de 60 s) ou dès qu'il est atteint — 5× moins de blocages de 34 ms
+- Doc : README décrivait la réserve avant reset comme globale, elle ne vise que reactor depuis 3.2.1
+- Fix : palier reactor surévalué (débit de base gonflé ×3,8 par un bonus hors ligne appliqué à tort) — le reactor accaparait le budget au détriment de warehouse/refinery
+
 ## 3.2.1
 - Fix : réserve avant reset bloquait à tort des achats warehouse/refinery rentables
 - Fix : panneau Factory désynchronisé de la vraie décision d'achat
