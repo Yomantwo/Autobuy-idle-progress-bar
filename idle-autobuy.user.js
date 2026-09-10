@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.4.1
+// @version      3.6.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -36,8 +36,8 @@
 
   // Production apportée par un niveau de chaque générateur (avant multiplicateurs).
   const GEN = { auto: 1, advanced: 5, generatorMk3: 10 };
-  // Déblocages uniques (maxLevel 1) achetés en priorité : leur gain n'est pas de l'énergie,
-  // le classement ⚡/point les sous-évaluerait. factory ouvre tout le circuit Power Cells.
+  // Achetées en priorité : leur gain n'est pas de l'énergie, le classement ⚡/point les
+  // sous-évaluerait. factory ouvre les Power Cells, box pèse ~40% des points gagnés.
   const RESEARCH_PRIORITY = ['generatorMk3', 'factory', 'box'];
   // autoBuy absente volontairement de tout gainMap : elle taxe les upgrades de +25% sans rien
   // apporter que ce script ne fasse déjà mieux.
@@ -230,15 +230,12 @@
     const list = candidates(p);
     if (!list.length) return { best: null, pick: null, wait: 0, T, proj: 0, qty: 1, list };
     const budget = p.energy - RESERVE;
-    const prods = list.filter(c => c.type !== 'costReduction');
-    const cr = list.find(c => c.type === 'costReduction');
-    let best = prods[0] || list[0];
-    let sim = simulate(p, T, best.type);
-    // Cost Reduction comparée par simulation directe (dérouler les deux branches), pas par
-    // conversion en ⚡/s : toute conversion ici est arbitraire et biaisée.
-    if (cr && prods.length) {
-      const simCR = simulate(p, T, cr.type);
-      if (simCR.produced > sim.produced) { best = cr; sim = simCR; }
+    // Chaque candidat comparé par simulation directe (dérouler la branche jusqu'au reset) : le
+    // score ne sert qu'à trier l'affichage, la décision vient de la production réellement simulée.
+    let best = list[0], sim = simulate(p, T, best.type);
+    for (const c of list.slice(1)) {
+      const s = simulate(p, T, c.type);
+      if (s.produced > sim.produced) { best = c; sim = s; }
     }
     // Cible non payable = on ÉPARGNE, sauf si elle est hors d'atteinte avant le reset (l'énergie
     // serait condamnée) : on prend alors le meilleur abordable.
@@ -283,9 +280,10 @@
   // ⚡/jour apportés par un niveau de plus. Un seul critère pour les recherches qui
   // produisent de l'ÉNERGIE ; c'est ensuite gain/coût qui décide entre elles.
   const RESEARCH_GAIN = {
-    // +1 %/niveau de production, actif en permanence (descriptions du jeu).
-    income:  p => permRate(p) * 0.01 * 86400,
-    synergy: p => permRate(p) * 0.01 * 86400,
+    // Le jeu applique un facteur (1+0,01×niveau) : le niveau L+1 ne rapporte donc pas 1 % du
+    // total actuel mais 0,01/(1+0,01L), sinon le gain est surestimé et croît avec le niveau.
+    income:  p => permRate(p) * 0.01 / (1 + 0.01 * p.research.income.level) * 86400,
+    synergy: p => permRate(p) * 0.01 / (1 + 0.01 * p.research.synergy.level) * 86400,
     // +1 %/tier atteint, plafonné à 5×niveau tiers comptés (formule confirmée dans le bundle
     // du jeu) : rendements décroissants une fois le plafond au-delà de maxTierReached.
     tierResonance: p => {
@@ -317,6 +315,9 @@
     },
   };
 
+  // Un repli POINTS ne bat la cible ⚡ que si son remboursement tient dans la moitié de
+  // l'horizon : 30 j correspond à un horizon de 60 j, les points épargnés ne périmant pas.
+  const POINTS_PAYBACK_DAYS = 30;
   // offlineResearch/dailyBonus rapportent des POINTS : les comparer dans leur propre monnaie
   // plutôt que de les convertir en ⚡ via income, ce qui les condamnait d'avance.
   const POINTS_GAIN = {
@@ -352,20 +353,27 @@
     return bestScored(p, RESEARCH_GAIN);
   };
 
-  // Achat réel : la cible ⚡ si payable, sinon le meilleur rendement POINTS pour ne pas laisser
-  // les points dormir — jamais au détriment d'income/synergy.
+  // Achat réel : la cible ⚡ si payable, sinon un repli POINTS — mais seulement s'il se rembourse
+  // assez vite, sinon on épargne : ces points valent plus placés sur la cible ⚡.
   const researchPurchase = p => {
     const target = researchTarget(p);
     if (target && target.cost <= p.researchPoints) return target;
-    return bestScored(p, POINTS_GAIN, true);
+    const alt = bestScored(p, POINTS_GAIN, true);
+    if (!alt) return null;
+    const gain = POINTS_GAIN[alt.type](p);
+    return (gain > 0 && alt.cost / gain <= POINTS_PAYBACK_DAYS) ? alt : null;
   };
 
   // ---------- Factory ----------
+  // Seuil calé sur l optimum exact d un modèle continu sans bruit : 0,09% de perte au pire.
+  const REACTOR_PAYBACK_DAYS = 10;
+  const REACTOR_PCT_MIN = 0.001, REACTOR_PCT_MAX = 0.003, REACTOR_PCT_K = 0.0394;
+  const reactorPct = L => REACTOR_PCT_MIN + (REACTOR_PCT_MAX - REACTOR_PCT_MIN) * (1 - Math.pow(1 - REACTOR_PCT_K, L));
   // Débit déduit de bonusValue, pas recalculé : le jeu le base sur la production HORS bonus.
-  const factoryBaseRate = p => p.factory.reactor.bonusValue / (0.001 + 0.0001 * p.factory.reactor.level);
+  const factoryBaseRate = p => p.factory.reactor.bonusValue / reactorPct(p.factory.reactor.level);
   // Débit courant réel (Power Cells/s) déduit du niveau reactor actuel. Factorisé ici : repris
   // par factoryDirectTarget et factoryPurchase, qui avaient chacun leur propre copie de la formule.
-  const factoryRate = p => factoryBaseRate(p) * (0.001 + 0.0001 * p.factory.reactor.level);
+  const factoryRate = p => factoryBaseRate(p) * reactorPct(p.factory.reactor.level);
   // Coûts linéaires (bundle du jeu, vérifiés sur achats réels le 04/09) : reactor +326/niv,
   // warehouse +500/niv, refinery +788/niv.
   const FACTORY_SLOPE = { reactor: 326, warehouse: 500, refinery: 788 };
@@ -373,7 +381,7 @@
   // Refinery plafonne désormais à 30% (rendements décroissants), fini le +1%/niveau infini.
   const factoryConv = Lf => 0.1 + 0.2 * (1 - Math.pow(0.95, Lf));
   const factoryRpAt = (baseRate, Lw, Lf, Lr) =>
-    Math.min(factoryCap(Lw), baseRate * (0.001 + 0.0001 * Lr) * 86400) * factoryConv(Lf);
+    Math.min(factoryCap(Lw), baseRate * reactorPct(Lr) * 86400) * factoryConv(Lf);
 
   // Simulation de branches sur 30j. reactorTarget force reactor jusqu'à la cible : un score
   // marginal (+1 niveau) reste toujours nul, aveugle à l'effet cumulé sur le remplissage.
@@ -407,7 +415,7 @@
     while (t < T && ++guard < 50000) {
       let b;
       while ((b = bestBuy()) && b.c <= stock) { stock -= b.c; L[b.t]++; }
-      const rate = baseRate * (0.001 + 0.0001 * L.reactor);
+      const rate = baseRate * reactorPct(L.reactor);
       const cap = factoryCap(L.warehouse);
       let dt = 86400 - (t % 86400);
       if (b && rate > 0) dt = Math.min(dt, Math.max(0, (b.c - stock) / rate));
@@ -462,7 +470,11 @@
       const tot = factorySimulate(p, 0, null, target);
       if (tot > best.tot) best = { target, tot };
     }
-    factoryReactorCache = { at: now, target: best.target > L0r ? best.target : null };
+    // Garde-fou : la simulation 30j est trop bruitée pour arbitrer seule. Un niveau reactor dont
+    // le surcroît de budget ne se rembourse pas en REACTOR_PAYBACK_DAYS est refusé, calcul exact.
+    const dB = factoryBaseRate(p) * (reactorPct(L0r + 1) - reactorPct(L0r)) * 86400;
+    const rentable = dB > 0 && p.factory.reactor.cost / dB <= REACTOR_PAYBACK_DAYS;
+    factoryReactorCache = { at: now, target: (rentable && best.target > L0r) ? best.target : null };
     return factoryReactorCache.target;
   };
   // Tant qu'un palier reactor est en cours (pas encore atteint), il passe devant
@@ -743,5 +755,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.4.1 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.6.0 chargé — lecture passive du polling de la page');
 })();

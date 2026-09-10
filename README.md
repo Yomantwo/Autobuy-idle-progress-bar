@@ -59,8 +59,13 @@ Le score le plus bas gagne. Ce critère unifie deux régimes : quand tout est ab
 l'énergie est rare, il évite de viser un objectif inaccessible pendant que d'autres achats
 plus modestes attendent.
 
-`Cost Reduction` ne produit rien directement : sa valeur est mesurée par simulation —
-dérouler la journée avec et sans cet achat, et comparer l'énergie totale produite.
+Ce score sert à trier, mais la décision finale revient à une **simulation directe** : chaque
+candidat est déroulé jusqu'au reset, et celui qui produit réellement le plus d'énergie gagne.
+Un score marginal ne voit pas que l'ordre d'achat compte — un multiplicateur acheté plus tard
+profite d'une base plus grande, effet qu'une simulation capture et qu'une formule manque.
+
+`Cost Reduction` ne produit rien directement : il est comparé de la même façon, en déroulant
+la journée avec et sans cet achat.
 
 ## Comment il choisit — Recherches
 
@@ -94,8 +99,9 @@ plancher.
 
 `offlineResearch` et `dailyBonus` rapportent des **points**, pas de l'énergie — elles se
 comparent dans leur propre monnaie (points gagnés par jour et par point investi) plutôt que
-d'être converties arbitrairement, et servent de repli quand rien d'autre n'est abordable
-pour ne pas laisser de points dormir.
+d'être converties arbitrairement, et servent de repli quand la cible n'est pas abordable.
+Ce repli est lui aussi soumis à un délai de remboursement : au-delà, le script épargne, les
+points valant plus placés sur la cible énergie — et ils ne périment pas au reset.
 
 ## Comment il choisit — Factory
 
@@ -111,13 +117,19 @@ rien, ce qui fait épargner naturellement en fin de cycle, sans seuil arbitraire
 Cette évaluation est recalculée à chaque état reçu.
 
 `reactor` est un cas à part : il produit bien des Power Cells (une part de la production
-d'énergie), mais **aucun point de recherche** directement — il finance les deux autres. Dès
-que la production dépasse la capacité du `warehouse`, un score marginal (+1 niveau) le note à
-zéro, alors qu'il détermine le budget d'achat de toute la journée. Il est donc valorisé par
-une **recherche de palier** : le script simule 30 jours de jeu pour plusieurs niveaux cibles
-espacés géométriquement, retient le meilleur, puis raffine autour de lui — et poursuit ce
-palier en priorité tant qu'il n'est pas atteint. Coûteux (une quinzaine de simulations),
-recalculé au plus toutes les 5 minutes ou dès que le palier est atteint.
+d'énergie), mais **aucun point de recherche** directement — il finance les deux autres. Sa
+part de production plafonne avec le niveau (rendements décroissants, comme `refinery`), donc
+au-delà d'un certain seuil chaque niveau supplémentaire n'apporte presque plus rien. Un score
+marginal (+1 niveau) le note à zéro tant que l'effet cumulé n'est pas visible, alors qu'il
+détermine le budget d'achat de toute la journée. Il est donc valorisé par une **recherche de
+palier** : le script simule 30 jours de jeu pour plusieurs niveaux cibles espacés
+géométriquement, retient le meilleur, puis raffine autour de lui — et poursuit ce palier en
+priorité tant qu'il n'est pas atteint. Coûteux (une quinzaine de simulations), recalculé au
+plus toutes les 5 minutes ou dès que le palier est atteint.
+
+Cette simulation restant approximative, un garde-fou la double : un niveau de `reactor` dont le
+surcroît de production ne se rembourse pas assez vite est refusé, quel que soit le palier visé.
+La même somme placée sur `warehouse` ou `refinery` rapporte alors davantage, dès le lendemain.
 
 La réserve avant reset ne vise que `reactor` : si le temps pour regagner ce qui serait dépensé
 dépasse ce qu'il reste avant le reset, le script épargne plutôt que de vider le stock juste
