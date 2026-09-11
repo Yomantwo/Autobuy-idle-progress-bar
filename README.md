@@ -25,9 +25,9 @@ compte et n'importe quel stade de partie.
 470 916 ⚡ · +5 718/s · 74 achats
 ⏳ reset dans 4h09 · 🎉 ×2 8m12 · base 2 859/s
 → Generator MK3 · ⚡56,05M · 2h59
-≈ 182M produits d'ici le reset · ⏸ épargne
+cible hors d'atteinte, achète Generator MK1
 🔬 Production boost · 3 764 (2 057 dispo)
-🏭 Warehouse · 2 032 (455 🔋) · ⏸
+🏭 Warehouse · 2 032 (455 🔋) · ⏸ · plein dans 19m27
 📦 boîtes : AUTO · 43 ramassées
 🔌 état reçu il y a 2s · 0 req. ajoutées
 ⚡ Generator MK1 ×4 → niv.91
@@ -39,7 +39,8 @@ compte et n'importe quel stade de partie.
 - Le surlignage suit l'onglet affiché : upgrade cible sur **UPGRADES**, recherche sur
   **RESEARCH**, bâtiment sur **FACTORY**. Vert = achetable, orange = on épargne.
 - La ligne 🏭 n'apparaît qu'une fois `Factory Access` recherchée ; elle affiche le bâtiment
-  visé et le stock de Power Cells disponible.
+  visé, le stock de Power Cells disponible, et le temps avant que le `warehouse` soit plein —
+  ou, si aucun achat n'est prévu, l'attente de ce remplissage seule.
 - **📦 boîtes** se bascule indépendamment (clic sur la ligne).
 - Les deux réglages sont mémorisés dans `localStorage`.
 - **–** replie le panneau.

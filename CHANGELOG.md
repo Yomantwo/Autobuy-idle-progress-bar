@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.6.1
+- Ajout : temps avant que le warehouse soit plein, affiche sur la ligne Factory — reste visible (« Attente du remplissage ») meme sans achat prevu
+- Simplification : retire la projection « XXM produits d'ici le reset » et l'etat « epargne », tous deux sans valeur actionnable — garde uniquement le repli sur un achat de secours
+
 ## 3.6.0
 - Fix : gain d'income/synergy surestime — le jeu applique (1+0,01xniveau), le marginal est 0,01/(1+0,01L) et non 1% du total (-33% a niveau 50, -67% a niveau 200)
 - Garde-fou : repli POINTS (dailyBonus/offlineResearch) refuse au-dela de 30 jours de remboursement — il gaspillait des PR qui valent plus places sur la cible energie

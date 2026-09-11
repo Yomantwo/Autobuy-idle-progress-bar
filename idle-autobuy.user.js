@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.6.0
+// @version      3.6.1
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -606,7 +606,7 @@
   const render = p => {
     $('stats').textContent = `${fmt(p.energy)} ⚡ · +${fmt(p.passiveRate)}/s · ${bought} achats`;
     const s = surgeOf(p);
-    const { best, pick, wait, T, proj, list } = plan(p);
+    const { best, pick, wait, T, list } = plan(p);
     $('surge').textContent = `⏳ reset dans ${dur(T)}`
       + (s > 1 ? ` · 🎉 ×${s} ${dur((p.bonusRemainingMs || 0) / 1000)} · base ${fmt(permRate(p))}/s` : '');
 
@@ -618,10 +618,7 @@
     } else {
       $('target').innerHTML = `<span style="color:${ready ? READY : WAIT}">→ ${LABELS[best.type] || best.type}</span>`
         + ` · ⚡${fmt(best.cost)} · ${ready ? 'prêt' : dur(wait)}`;
-      $('hold').textContent = `≈ ${fmt(proj / 1e6)}M produits d'ici le reset`
-        + (ready ? ''
-          : pick ? ` · cible hors d'atteinte, achète ${LABELS[pick.type] || pick.type}`
-          : ' · ⏸ épargne');
+      $('hold').textContent = (!ready && pick) ? `cible hors d'atteinte, achète ${LABELS[pick.type] || pick.type}` : '';
       // Le critère de décision, exposé tel quel pour pouvoir le vérifier.
       $('target').title = `Score = ${WAIT_WEIGHT} × attente + remboursement (le plus bas gagne)\n`
         + list.map(c => `${(LABELS[c.type] || c.type).padEnd(18)} ${fmt(c.cost / 1e6)}M · +${c.gain.toFixed(1)}/s`
@@ -641,11 +638,15 @@
     // Reflète l'achat RÉEL (factoryPurchase), pas la simple affordabilité : sinon le panneau
     // affichait « prêt » juste avant reset alors que la réserve reactor bloquait l'achat.
     const fAfford = ft && !!(p.factory && factoryPurchase(p));
-    $('factory').innerHTML = ft
+    const fRate = p.factory ? factoryRate(p) : 0;
+    const fRoom = p.factory ? p.powerCellsCapacity - p.powerCells : 0;
+    const fFull = p.factory && fRoom > 0 && fRate > 0 ? ` · plein dans ${dur(fRoom / fRate)}` : '';
+    $('factory').innerHTML = !p.factory ? ''
+      : ft
       ? `🏭 <span style="color:${fAfford ? READY : WAIT}">${LABELS_FACTORY[ft.type]}</span>`
         + ` · ${fmt(ft.cost)} (${fmt(p.powerCells)} 🔋)`
-        + (fAfford ? '' : ' · ⏸')
-      : '';
+        + (fAfford ? '' : ' · ⏸') + fFull
+      : `🏭 <span style="color:${WAIT}">Attente du remplissage</span>${fFull}`;
 
     // Le surlignage suit l'onglet affiché : upgrade cible sur UPGRADES, recherche cible
     // sur RESEARCH, rien sur STORE ou si l'onglet actif n'est pas identifiable.
@@ -755,5 +756,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.6.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.6.1 chargé — lecture passive du polling de la page');
 })();
