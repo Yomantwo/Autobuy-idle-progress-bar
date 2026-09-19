@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.6.1
+// @version      3.8.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -45,6 +45,9 @@
   // Points/heure gagnés hors ligne au plein tarif, mesuré le 22-23/08 (877 pts / 14,3 h à 15 %
   // de part) : sert à valoriser offlineResearch.
   const OFFLINE_PTS_PER_HOUR = 408;
+  // Apport d'un niveau, relevé sur les deux comptes : base +10 ⚡/s, dailyBonus +22,5 points
+  // de pourcentage sur une récompense de base de 200 points.
+  const BASE_PER_LEVEL = 10, DAILY_BONUS_PER_LEVEL = 0.225;
 
   const LABELS = {
     auto: 'Generator MK1', advanced: 'Generator MK2', generatorMk3: 'Generator MK3',
@@ -64,6 +67,10 @@
   // --------------------------------
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // Tout ce qui vient du serveur et finit dans innerHTML passe par ici : un champ piégé
+  // (niveau, clé d'upgrade) s'exécuterait sinon comme du HTML dans la page du jeu.
+  const esc = s => String(s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = n => Math.round(n).toLocaleString('fr-FR');
   const dur = s => (s < 0 || !isFinite(s)) ? '—'
     : s < 60 ? `${Math.ceil(s)}s`
@@ -291,9 +298,10 @@
       const bonus = l => 0.01 * Math.min(p.maxTierReached, 5 * l);
       return permRate(p) * (bonus(lvl + 1) - bonus(lvl)) * 86400;
     },
-    // +1 à la production de base : agit sur le cycle actif ET sur le plancher hors ligne.
-    base: p => mult(p) * 86400
-      + offlineMult(p) * offlineSecPerDay() * offlineRatio(p),
+    // Un niveau vaut +10 ⚡/s de base (relevé sur les deux comptes), pas +1 : la valoriser à
+    // l'unité la sous-estimait d'un facteur 10. Agit sur le cycle actif ET le plancher hors ligne.
+    base: p => BASE_PER_LEVEL * (mult(p) * 86400
+      + offlineMult(p) * offlineSecPerDay() * offlineRatio(p)),
     // +1 point de pourcentage sur la part créditée hors ligne, appliqué au seul plancher.
     offline: p => floorRate(p) * 0.01 * offlineSecPerDay(),
     // Recherche (jamais reset) : garantit un palier de départ sur MK1/MK2/MK3 chaque jour.
@@ -322,7 +330,7 @@
   // plutôt que de les convertir en ⚡ via income, ce qui les condamnait d'avance.
   const POINTS_GAIN = {
     offlineResearch: () => 0.01 * (OFFLINE_PTS_PER_HOUR / 3600) * offlineSecPerDay(),
-    dailyBonus: p => (p.dailyBonus.researchReward / (1 + p.research.dailyBonus.bonusValue)) * 0.1,
+    dailyBonus: p => (p.dailyBonus.researchReward / (1 + p.research.dailyBonus.bonusValue)) * DAILY_BONUS_PER_LEVEL,
   };
 
   const researchUsable = (p, t) => {
@@ -365,137 +373,58 @@
   };
 
   // ---------- Factory ----------
-  // Seuil calé sur l optimum exact d un modèle continu sans bruit : 0,09% de perte au pire.
-  const REACTOR_PAYBACK_DAYS = 10;
-  const REACTOR_PCT_MIN = 0.001, REACTOR_PCT_MAX = 0.003, REACTOR_PCT_K = 0.0394;
-  const reactorPct = L => REACTOR_PCT_MIN + (REACTOR_PCT_MAX - REACTOR_PCT_MIN) * (1 - Math.pow(1 - REACTOR_PCT_K, L));
-  // Débit déduit de bonusValue, pas recalculé : le jeu le base sur la production HORS bonus.
+  // Part prélevée par reactor : linéaire et sans plafond depuis la refonte (relevé sur 2 comptes).
+  const REACTOR_PCT_MIN = 0.000026, REACTOR_PCT_STEP = 0.00001;
+  const reactorPct = L => REACTOR_PCT_MIN + REACTOR_PCT_STEP * L;
+  // Débit déduit de bonusValue, jamais recalculé depuis la production : cette inversion reste
+  // exacte quelle que soit la base employée par le jeu (totale ou hors bonus).
   const factoryBaseRate = p => p.factory.reactor.bonusValue / reactorPct(p.factory.reactor.level);
-  // Débit courant réel (Power Cells/s) déduit du niveau reactor actuel. Factorisé ici : repris
-  // par factoryDirectTarget et factoryPurchase, qui avaient chacun leur propre copie de la formule.
+  // Débit courant réel (Power Cells/s) déduit du niveau reactor actuel.
   const factoryRate = p => factoryBaseRate(p) * reactorPct(p.factory.reactor.level);
-  // Coûts linéaires (bundle du jeu, vérifiés sur achats réels le 04/09) : reactor +326/niv,
-  // warehouse +500/niv, refinery +788/niv.
-  const FACTORY_SLOPE = { reactor: 326, warehouse: 500, refinery: 788 };
-  const factoryCap = Lw => 2880 + 576 * Lw;
-  // Refinery plafonne désormais à 30% (rendements décroissants), fini le +1%/niveau infini.
-  const factoryConv = Lf => 0.1 + 0.2 * (1 - Math.pow(0.95, Lf));
-  const factoryRpAt = (baseRate, Lw, Lf, Lr) =>
-    Math.min(factoryCap(Lw), baseRate * reactorPct(Lr) * 86400) * factoryConv(Lf);
+  // Coûts linéaires identiques pour les trois bâtiments, relevés sur les deux comptes.
+  const FACTORY_COST0 = 500, FACTORY_SLOPE = 4235, WAREHOUSE_STEP = 4750;
+  const factoryCap = Lw => 5000 + WAREHOUSE_STEP * Lw;
+  // Refinery redevenue linéaire et sans plafond avec la refonte : +0,4 point par niveau.
+  const factoryConv = Lf => 0.02 + 0.004 * Lf;
+  // Dépense cumulée pour atteindre un niveau : somme des coûts, donc quadratique.
+  const factorySpent = L => FACTORY_COST0 * L + FACTORY_SLOPE * L * (L - 1) / 2;
 
-  // Simulation de branches sur 30j. reactorTarget force reactor jusqu'à la cible : un score
-  // marginal (+1 niveau) reste toujours nul, aveugle à l'effet cumulé sur le remplissage.
-  const FACTORY_SIM_DAYS = 30;
-  const factorySimulate = (p, dCost, dType, reactorTarget) => {
-    const baseRate = factoryBaseRate(p);
-    const cost0 = {};
-    for (const t of ['reactor', 'warehouse', 'refinery']) cost0[t] = p.factory[t].cost - FACTORY_SLOPE[t] * p.factory[t].level;
-    const cost = (t, L) => cost0[t] + FACTORY_SLOPE[t] * L;
-    const L = { reactor: p.factory.reactor.level, warehouse: p.factory.warehouse.level, refinery: p.factory.refinery.level };
-    if (dType) L[dType]++;
-    // Écarte toute cible plus chère que la capacité : elle ne serait JAMAIS payable et le
-    // script épargnerait à vide pendant que le stock déborde.
-    const bestBuy = () => {
-      if (reactorTarget && L.reactor < reactorTarget) {
-        const c = cost('reactor', L.reactor);
-        if (c <= factoryCap(L.warehouse)) return { t: 'reactor', c };
-      }
-      const cur = factoryRpAt(baseRate, L.warehouse, L.refinery, L.reactor);
-      let best = null;
-      for (const t of ['warehouse', 'refinery']) {
-        const c = cost(t, L[t]); if (c > factoryCap(L.warehouse)) continue;
-        const nx = t === 'warehouse' ? factoryRpAt(baseRate, L.warehouse + 1, L.refinery, L.reactor)
-          : factoryRpAt(baseRate, L.warehouse, L.refinery + 1, L.reactor);
-        const sc = (nx - cur) / c; if (!best || sc > best.sc) best = { t, c, sc };
-      }
-      return best;
-    };
-    let stock = p.powerCells - dCost, rpTotal = 0, t = 0, guard = 0;
-    const T = FACTORY_SIM_DAYS * 86400;
-    while (t < T && ++guard < 50000) {
-      let b;
-      while ((b = bestBuy()) && b.c <= stock) { stock -= b.c; L[b.t]++; }
-      const rate = baseRate * reactorPct(L.reactor);
-      const cap = factoryCap(L.warehouse);
-      let dt = 86400 - (t % 86400);
-      if (b && rate > 0) dt = Math.min(dt, Math.max(0, (b.c - stock) / rate));
-      stock = Math.min(cap, stock + rate * dt);
-      t += dt;
-      if (t % 86400 < 1e-6 || t >= T) {
-        rpTotal += Math.min(stock, cap) * factoryConv(L.refinery);
-        stock = 0;
-        t = Math.ceil(t / 86400 - 1e-9) * 86400;
-      }
-    }
-    return rpTotal;
+  // Répartition du budget maximisant la croissance à long terme, résolue analytiquement.
+  // Le budget d'un jour vaut production − capacité : le reactor le crée, le warehouse le consomme.
+  const factoryAllocation = p => {
+    const P = REACTOR_PCT_STEP * 86400 * factoryBaseRate(p);
+    const q = WAREHOUSE_STEP / Math.max(1e-9, P);
+    const r = (3 * q + Math.sqrt(9 * q * q + 8)) / 2;
+    const y = 1 / (r * r + 1 + (r - q) * r / 2);
+    return { reactor: r * r * y, warehouse: y, refinery: (r - q) * r * y / 2 };
   };
-  // warehouse/refinery au stock et au temps RÉELS avant reset (pas une journée pleine fictive) :
-  // sans le temps de se remplir avant le reset, un achat ne vaut rien, d'où l'épargne naturelle en fin de cycle.
+
+  // Un score marginal est aveugle ici : agrandir le warehouse augmente la récolte mais réduit
+  // d'autant le budget, si bien que le glouton finit par s'étrangler. On suit donc la répartition.
   const factoryDirectTarget = p => {
-    const secToReset = msToReset() / 1000;
-    const rate = factoryRate(p);
-    const projected = (Lw, Lf, stock) => Math.min(factoryCap(Lw), stock + rate * secToReset) * factoryConv(Lf);
-    const cur = projected(p.factory.warehouse.level, p.factory.refinery.level, p.powerCells);
-    let best = null;
-    for (const t of ['warehouse', 'refinery']) {
-      const c = p.factory[t].cost;
-      if (c > p.powerCellsCapacity) continue;
-      const nx = t === 'warehouse'
-        ? projected(p.factory.warehouse.level + 1, p.factory.refinery.level, p.powerCells - c)
-        : projected(p.factory.warehouse.level, p.factory.refinery.level + 1, p.powerCells - c);
-      const score = (nx - cur) / c;
-      if (score > 0 && (!best || score > best.score)) best = { type: t, cost: c, score };
+    const part = factoryAllocation(p);
+    const lv = { reactor: p.factory.reactor.level, warehouse: p.factory.warehouse.level, refinery: p.factory.refinery.level };
+    const total = factorySpent(lv.reactor) + factorySpent(lv.warehouse) + factorySpent(lv.refinery);
+    const retard = t => total * part[t] - factorySpent(lv[t]);
+    const ordre = ['reactor', 'warehouse', 'refinery'].sort((a, b) => retard(b) - retard(a));
+    // Le plus en retard d'abord ; s'il dépasse la capacité maximale il ne sera jamais payable.
+    for (const type of ordre) {
+      const cost = p.factory[type].cost;
+      if (cost <= p.powerCellsCapacity) return { type, cost, part: part[type] };
     }
-    return best;
+    return null;
   };
-  // Palier reactor : paliers géométriques + raffinement, pas un scan fin (instable, ±20% entre
-  // niveaux voisins). ~13 simulations de 30 j = ~34 ms : recalcul à l'expiration ou palier atteint.
-  const FACTORY_REFRESH_MS = 300000;
-  let factoryReactorCache = null;
-  const factoryReactorTarget = p => {
-    const now = Date.now();
-    const c = factoryReactorCache;
-    if (c && now - c.at < FACTORY_REFRESH_MS && !(c.target && p.factory.reactor.level >= c.target))
-      return c.target;
-    const L0r = p.factory.reactor.level;
-    let best = { target: 0, tot: factorySimulate(p, 0, null, 0) };
-    for (const f of [0.25, 0.5, 1, 2, 4, 8, 16, 32]) {
-      const target = Math.round(Math.max(L0r, 50) * (1 + f));
-      const tot = factorySimulate(p, 0, null, target);
-      if (tot > best.tot) best = { target, tot };
-    }
-    const span = Math.max(50, Math.round(best.target * 0.15));
-    for (const d of [-2, -1, 1, 2]) {
-      const target = Math.max(L0r, best.target + d * span);
-      const tot = factorySimulate(p, 0, null, target);
-      if (tot > best.tot) best = { target, tot };
-    }
-    // Garde-fou : la simulation 30j est trop bruitée pour arbitrer seule. Un niveau reactor dont
-    // le surcroît de budget ne se rembourse pas en REACTOR_PAYBACK_DAYS est refusé, calcul exact.
-    const dB = factoryBaseRate(p) * (reactorPct(L0r + 1) - reactorPct(L0r)) * 86400;
-    const rentable = dB > 0 && p.factory.reactor.cost / dB <= REACTOR_PAYBACK_DAYS;
-    factoryReactorCache = { at: now, target: (rentable && best.target > L0r) ? best.target : null };
-    return factoryReactorCache.target;
-  };
-  // Tant qu'un palier reactor est en cours (pas encore atteint), il passe devant
-  // warehouse/refinery — c'est ce qu'a validé la simulation, pas un simple score comparé.
-  const factoryTarget = p => {
-    const rTarget = factoryReactorTarget(p);
-    if (rTarget && p.factory.reactor.level < rTarget) {
-      const c = p.factory.reactor.cost;
-      if (c <= p.powerCellsCapacity) return { type: 'reactor', cost: c, score: Infinity };
-    }
-    return factoryDirectTarget(p);
-  };
-  // Réserve avant reset pour reactor seul : sans elle il vidait le stock juste avant chaque
-  // reset. warehouse/refinery ont déjà la leur dans factoryDirectTarget (projected()), sur le stock déjà là, pas une production future — même seuil bloquerait des achats rentables.
+  const factoryTarget = p => factoryDirectTarget(p);
+  // Acheter tôt dans la journée : il faut pouvoir regagner la dépense avant le reset, sinon
+  // la récolte du soir paie l'achat alors qu'attendre le lendemain ne coûte rien.
   const factoryPurchase = p => {
     const t = factoryTarget(p);
     if (!t || t.cost > p.powerCells) return null;
-    if (t.type === 'reactor') {
-      const rate = factoryRate(p);
-      if (rate > 0 && t.cost / rate > msToReset() / 1000) return null;
-    }
+    // Le jeu refuse l'amélioration du warehouse tant que le stock n'est pas plein (le coût
+    // affiché est erroné, bug signalé par le dev) : sans ça on le harcèle de requêtes rejetées.
+    if (t.type === 'warehouse' && p.powerCells < p.powerCellsCapacity) return null;
+    const rate = factoryRate(p);
+    if (rate > 0 && t.cost / rate > msToReset() / 1000) return null;
     return t;
   };
 
@@ -595,7 +524,7 @@
   const addLog = line => {
     log.unshift(line);
     log.length = Math.min(log.length, 3);
-    $('log').innerHTML = log.map(l => `<div>${l}</div>`).join('');
+    $('log').innerHTML = log.map(l => `<div>${esc(l)}</div>`).join('');
   };
   paint();
 
@@ -616,7 +545,7 @@
       $('target').title = '';
       $('hold').textContent = '';
     } else {
-      $('target').innerHTML = `<span style="color:${ready ? READY : WAIT}">→ ${LABELS[best.type] || best.type}</span>`
+      $('target').innerHTML = `<span style="color:${ready ? READY : WAIT}">→ ${esc(LABELS[best.type] || best.type)}</span>`
         + ` · ⚡${fmt(best.cost)} · ${ready ? 'prêt' : dur(wait)}`;
       $('hold').textContent = (!ready && pick) ? `cible hors d'atteinte, achète ${LABELS[pick.type] || pick.type}` : '';
       // Le critère de décision, exposé tel quel pour pouvoir le vérifier.
@@ -629,7 +558,7 @@
     const rt = researchTarget(p);
     const rAfford = rt && rt.cost <= p.researchPoints;
     $('research').innerHTML = rt
-      ? `🔬 <span style="color:${rAfford ? READY : WAIT}">${LABELS_RESEARCH[rt.type] || rt.type}</span>`
+      ? `🔬 <span style="color:${rAfford ? READY : WAIT}">${esc(LABELS_RESEARCH[rt.type] || rt.type)}</span>`
         + ` · ${fmt(rt.cost)} (${fmt(p.researchPoints)} dispo)`
         + (rAfford ? '' : ' · ⏸')
       : '🔬 rien à chercher';
@@ -643,7 +572,7 @@
     const fFull = p.factory && fRoom > 0 && fRate > 0 ? ` · plein dans ${dur(fRoom / fRate)}` : '';
     $('factory').innerHTML = !p.factory ? ''
       : ft
-      ? `🏭 <span style="color:${fAfford ? READY : WAIT}">${LABELS_FACTORY[ft.type]}</span>`
+      ? `🏭 <span style="color:${fAfford ? READY : WAIT}">${esc(LABELS_FACTORY[ft.type])}</span>`
         + ` · ${fmt(ft.cost)} (${fmt(p.powerCells)} 🔋)`
         + (fAfford ? '' : ' · ⏸') + fFull
       : `🏭 <span style="color:${WAIT}">Attente du remplissage</span>${fFull}`;
@@ -677,8 +606,12 @@
   // sur une énergie déjà dépensée. lastSeen reste réservé au suivi du polling de la page.
   const adopt = q => { latest = q; snap = q; snapAt = Date.now(); render(q); };
 
+  // Un achat refusé se reproduirait à chaque état reçu : on met les achats en pause le temps
+  // que la situation change, plutôt que de marteler le serveur d'appels voués à l'échec.
+  const ACT_BACKOFF_MS = 60000;
+  let actPausedUntil = 0;
   const act = async () => {
-    if (busy || !latest) return;
+    if (busy || !latest || Date.now() < actPausedUntil) return;
     busy = true;
     try {
       let p = latest;
@@ -718,7 +651,8 @@
         adopt(p); // l'espacement des requêtes est assuré par gate()
       }
     } catch (e) {
-      $('target').textContent = 'erreur : ' + e.message; // on retentera au prochain état
+      actPausedUntil = Date.now() + ACT_BACKOFF_MS;
+      $('target').textContent = 'erreur : ' + e.message;
     } finally {
       busy = false;
     }
@@ -756,5 +690,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.6.1 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.8.0 chargé — lecture passive du polling de la page');
 })();

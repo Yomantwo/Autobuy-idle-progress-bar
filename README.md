@@ -108,37 +108,22 @@ points valant plus placés sur la cible énergie — et ils ne périment pas au 
 
 Une troisième monnaie : les **Power Cells**. `Reactor` en génère en continu (part de la
 production), `Warehouse` plafonne le stock, `Refinery` convertit tout le stock en points de
-recherche au reset.
+recherche au reset — intégralement, sans reste : tout ce qui dépasse la capacité est perdu,
+toute capacité inutilisée au moment du reset l'est aussi.
 
-`warehouse` et `refinery` se départagent au critère direct (points de recherche par jour et
-par Power Cell investie) : ils augmentent la récolte du prochain reset, leur valeur est
-immédiate. Ils sont évalués sur le stock et le temps **réels** restants avant le reset (pas
-une journée pleine fictive) — un achat sans le temps de se remplir avant le reset ne vaut
-rien, ce qui fait épargner naturellement en fin de cycle, sans seuil arbitraire à régler.
-Cette évaluation est recalculée à chaque état reçu.
+`reactor` ne rapporte aucun point de recherche directement, il finance les deux autres — mais
+un score marginal classique le sous-évalue : agrandir `warehouse` augmente la récolte tout en
+réduisant d'autant le budget quotidien disponible (production moins capacité à reconstituer),
+si bien qu'un classement purement marginal finit par s'étrangler lui-même. Les trois bâtiments
+sont donc répartis selon une allocation résolue analytiquement (maximiser la croissance du
+budget à long terme), recalculée à chaque état reçu à partir des coûts et débits réels.
 
-`reactor` est un cas à part : il produit bien des Power Cells (une part de la production
-d'énergie), mais **aucun point de recherche** directement — il finance les deux autres. Sa
-part de production plafonne avec le niveau (rendements décroissants, comme `refinery`), donc
-au-delà d'un certain seuil chaque niveau supplémentaire n'apporte presque plus rien. Un score
-marginal (+1 niveau) le note à zéro tant que l'effet cumulé n'est pas visible, alors qu'il
-détermine le budget d'achat de toute la journée. Il est donc valorisé par une **recherche de
-palier** : le script simule 30 jours de jeu pour plusieurs niveaux cibles espacés
-géométriquement, retient le meilleur, puis raffine autour de lui — et poursuit ce palier en
-priorité tant qu'il n'est pas atteint. Coûteux (une quinzaine de simulations), recalculé au
-plus toutes les 5 minutes ou dès que le palier est atteint.
+Le bâtiment le plus en retard sur sa part cible de dépense cumulée est acheté en priorité,
+parmi ceux dont le coût reste sous la capacité maximale du `warehouse` (sinon jamais payable).
 
-Cette simulation restant approximative, un garde-fou la double : un niveau de `reactor` dont le
-surcroît de production ne se rembourse pas assez vite est refusé, quel que soit le palier visé.
-La même somme placée sur `warehouse` ou `refinery` rapporte alors davantage, dès le lendemain.
-
-La réserve avant reset ne vise que `reactor` : si le temps pour regagner ce qui serait dépensé
+La réserve avant reset s'applique aux trois : si le temps pour regagner ce qui serait dépensé
 dépasse ce qu'il reste avant le reset, le script épargne plutôt que de vider le stock juste
-avant qu'il ne se convertisse. `warehouse` et `refinery` n'en ont pas besoin : leur score tient
-déjà compte du temps restant.
-
-Une cible plus chère que la capacité maximale du `warehouse` est écartée du classement : elle
-ne serait jamais payable, et le script épargnerait indéfiniment pendant que le stock déborde.
+avant qu'il ne se convertisse.
 
 ## Coût réseau
 

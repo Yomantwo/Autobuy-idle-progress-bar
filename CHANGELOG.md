@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.8.0
+- Factory : le score marginal figeait les achats (reactor jamais achete, puis la capacite reservee devorait tout le budget et la progression s arretait). Remplace par une repartition du budget resolue analytiquement : le reactor cree le budget, le warehouse le consomme
+- Consequence mesuree au depart reel des deux comptes : +24% de RP cumules sur 7 jours, la progression ne se bloque plus
+
+## 3.7.0
+- Securite : injection HTML possible via les champs renvoyes par le serveur (ex. un niveau piege) qui finissaient bruts dans le panneau — tout ce qui vient du serveur est desormais echappe
+- Refonte du jeu du 18/09 : toutes les formules Factory recalibrees (cout unifie 500+4235/niv, capacite 5000+4750/niv, conversion 0,02+0,004/niv, part reactor lineaire sans plafond)
+- Reactor : recherche de palier sur 30 j supprimee, remplacee par un classement glouton incluant une paire reactor+warehouse — les deux se bridant via le min(), les evaluer isolement figeait le script
+- Fix : recherche base valorisee a +1 energie/s alors qu'un niveau en donne +10 — sous-evaluee d'un facteur 10 depuis toujours, elle passe desormais premiere au classement
+- Fix : dailyBonus valorise a +0,1/niveau au lieu de +0,225
+- Achat warehouse tente seulement stock plein (le jeu l'exige, cout affiche errone cote serveur)
+- Pause d'une minute apres un achat refuse, au lieu de retenter toutes les 3 s
+
 ## 3.6.1
 - Ajout : temps avant que le warehouse soit plein, affiche sur la ligne Factory — reste visible (« Attente du remplissage ») meme sans achat prevu
 - Simplification : retire la projection « XXM produits d'ici le reset » et l'etat « epargne », tous deux sans valeur actionnable — garde uniquement le repli sur un achat de secours
