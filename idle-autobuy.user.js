@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Auto Buy
 // @namespace    local.idle.autobuy
-// @version      3.8.0
+// @version      3.8.1
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -565,16 +565,23 @@
 
     const ft = p.factory ? factoryTarget(p) : null;
     // Reflète l'achat RÉEL (factoryPurchase), pas la simple affordabilité : sinon le panneau
-    // affichait « prêt » juste avant reset alors que la réserve reactor bloquait l'achat.
+    // affichait « prêt » juste avant reset alors que la réserve bloquait l'achat.
     const fAfford = ft && !!(p.factory && factoryPurchase(p));
     const fRate = p.factory ? factoryRate(p) : 0;
     const fRoom = p.factory ? p.powerCellsCapacity - p.powerCells : 0;
     const fFull = p.factory && fRoom > 0 && fRate > 0 ? ` · plein dans ${dur(fRoom / fRate)}` : '';
+    // Le stock suffit mais l'achat est quand même refusé : dit pourquoi, sinon le ⏸ générique
+    // ne distingue pas « attend le plein » (exigé par le jeu) de « reset trop proche ».
+    let fNote = '';
+    if (ft && !fAfford && ft.cost <= p.powerCells) {
+      if (ft.type === 'warehouse' && p.powerCells < p.powerCellsCapacity) fNote = ' · attend le plein';
+      else if (fRate > 0 && ft.cost / fRate > msToReset() / 1000) fNote = ' · reset trop proche';
+    }
     $('factory').innerHTML = !p.factory ? ''
       : ft
       ? `🏭 <span style="color:${fAfford ? READY : WAIT}">${esc(LABELS_FACTORY[ft.type])}</span>`
         + ` · ${fmt(ft.cost)} (${fmt(p.powerCells)} 🔋)`
-        + (fAfford ? '' : ' · ⏸') + fFull
+        + (fAfford ? '' : ' · ⏸') + fNote + fFull
       : `🏭 <span style="color:${WAIT}">Attente du remplissage</span>${fFull}`;
 
     // Le surlignage suit l'onglet affiché : upgrade cible sur UPGRADES, recherche cible
@@ -690,5 +697,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.8.0 chargé — lecture passive du polling de la page');
+  console.log('autobuy v3.8.1 chargé — lecture passive du polling de la page');
 })();

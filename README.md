@@ -39,8 +39,8 @@ cible hors d'atteinte, achète Generator MK1
 - Le surlignage suit l'onglet affiché : upgrade cible sur **UPGRADES**, recherche sur
   **RESEARCH**, bâtiment sur **FACTORY**. Vert = achetable, orange = on épargne.
 - La ligne 🏭 n'apparaît qu'une fois `Factory Access` recherchée ; elle affiche le bâtiment
-  visé, le stock de Power Cells disponible, et le temps avant que le `warehouse` soit plein —
-  ou, si aucun achat n'est prévu, l'attente de ce remplissage seule.
+  visé, le stock disponible, et le temps avant que le `warehouse` soit plein. Si le stock
+  suffit mais que rien n'est acheté, elle précise pourquoi (plein exigé, ou reset trop proche).
 - **📦 boîtes** se bascule indépendamment (clic sur la ligne).
 - Les deux réglages sont mémorisés dans `localStorage`.
 - **–** replie le panneau.

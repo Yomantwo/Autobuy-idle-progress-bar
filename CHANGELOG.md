@@ -1,5 +1,8 @@
 # Changelog
 
+## 3.8.1
+- UI : la ligne Factory precise a nouveau pourquoi aucun achat n'est en cours (attend le plein du warehouse, ou reset trop proche) au lieu d'un simple pause generique
+
 ## 3.8.0
 - Factory : le score marginal figeait les achats (reactor jamais achete, puis la capacite reservee devorait tout le budget et la progression s arretait). Remplace par une repartition du budget resolue analytiquement : le reactor cree le budget, le warehouse le consomme
 - Consequence mesuree au depart reel des deux comptes : +24% de RP cumules sur 7 jours, la progression ne se bloque plus
