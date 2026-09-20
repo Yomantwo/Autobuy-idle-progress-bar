@@ -490,9 +490,9 @@
     <div id="ab-body" style="padding:8px 10px;display:flex;flex-direction:column;gap:4px">
       <div id="ab-stats" style="color:#94a3b8">en attente du 1er état…</div>
       <div id="ab-surge" style="color:#64748b;font-size:11px"></div>
+      <div id="ab-autos" style="color:#94a3b8"></div>
       <div id="ab-target" style="color:#e2e8f0">—</div>
       <div id="ab-hold" style="color:#64748b;font-size:11px"></div>
-      <div id="ab-autos" style="color:#94a3b8"></div>
       <div id="ab-research" style="color:#94a3b8;font-size:11px"></div>
       <div id="ab-factory" style="color:#94a3b8;font-size:11px"></div>
       <div id="ab-box" style="cursor:pointer;color:#94a3b8" title="Cliquer pour activer/désactiver le ramassage des boîtes"></div>
@@ -511,7 +511,7 @@
     b.title = all ? 'tout désactiver' : 'tout activer';
     $('dot').style.background = anyAuto() ? READY : '#64748b';
     $('dot').title = anyAuto() ? 'achats automatiques actifs' : 'achats en pause (analyse toujours active)';
-    $('autos').innerHTML = Object.entries(AUTO_CATS)
+    $('autos').innerHTML = 'Auto-achat : ' + Object.entries(AUTO_CATS)
       .map(([c, icon]) => `<span data-c="${c}" style="cursor:pointer;color:${autos[c] ? READY : '#64748b'}">${icon} ${autos[c] ? 'ON' : 'OFF'}</span>`)
       .join('  ');
     $('box').innerHTML = `📦 boîtes : <b style="color:${autoBox ? READY : '#64748b'}">${autoBox ? 'AUTO' : 'OFF'}</b> · ${boxes} ramassées`;

@@ -25,9 +25,9 @@ compte et n'importe quel stade de partie.
 ● AUTO BUY                    – [TOUT]
 470 916 ⚡ · +5 718/s · 74 achats
 ⏳ reset dans 4h09 · 🎉 ×2 8m12 · base 2 859/s
+Auto-achat : ⚡ ON  🔬 ON  🏭 OFF
 → Generator MK3 · ⚡56,05M · 2h59
 cible hors d'atteinte, achète Generator MK1
-⚡ ON  🔬 ON  🏭 OFF
 🔬 Production boost · 3 764 (2 057 dispo)
 🏭 Warehouse · 2 032 (455 🔋) · ⏸ · plein dans 19m27
 📦 boîtes : AUTO · 43 ramassées
