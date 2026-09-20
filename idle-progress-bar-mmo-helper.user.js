@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Idle Progress Bar MMO - Auto Buy
+// @name         Idle Progress Bar MMO - Helper
 // @namespace    local.idle.autobuy
-// @version      3.8.1
+// @version      3.9.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -17,7 +17,6 @@
   const MAX_ACTIONS = 8;      // actions max par salve
   const BULK_MAX    = 25;     // plafond dur sur la quantité par requête
   const RESERVE     = 0;      // énergie à toujours garder de côté
-  const AUTO_RESEARCH = true;
   // Le jeu bloque les clients dépassant 1 appel / 3 s. Marge de 200 ms pour couvrir
   // la gigue de setTimeout et réseau.
   const MIN_REQ_GAP_MS = 3200;
@@ -465,9 +464,13 @@
   };
 
   // ---------- Panneau ----------
-  const KEY = 'idleAutobuy.on', KEY_BOX = 'idleAutobuy.box';
-  let running = localStorage.getItem(KEY) !== '0';
+  const KEY_BOX = 'idleAutobuy.box';
   let autoBox = localStorage.getItem(KEY_BOX) !== '0';
+  // Trois bascules indépendantes : ex. garder la Factory en manuel tout en laissant
+  // tourner les upgrades.
+  const AUTO_CATS = { upgrade: '⚡', research: '🔬', factory: '🏭' };
+  const autos = {};
+  for (const c in AUTO_CATS) autos[c] = localStorage.getItem('idleAutobuy.' + c) !== '0';
   let bought = 0, boxes = 0;
   const log = [];
 
@@ -480,7 +483,7 @@
   box.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #334155">
       <span id="ab-dot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
-      <b style="flex:1;font-size:11px;letter-spacing:.05em;text-transform:uppercase">Auto Buy</b>
+      <b style="flex:1;font-size:11px;letter-spacing:.05em;text-transform:uppercase">Helper</b>
       <button id="ab-min" style="all:unset;cursor:pointer;padding:0 4px;color:#94a3b8">–</button>
       <button id="ab-toggle" style="all:unset;cursor:pointer;padding:2px 10px;border-radius:4px;font-weight:600;font-size:11px"></button>
     </div>
@@ -489,6 +492,7 @@
       <div id="ab-surge" style="color:#64748b;font-size:11px"></div>
       <div id="ab-target" style="color:#e2e8f0">—</div>
       <div id="ab-hold" style="color:#64748b;font-size:11px"></div>
+      <div id="ab-autos" style="color:#94a3b8"></div>
       <div id="ab-research" style="color:#94a3b8;font-size:11px"></div>
       <div id="ab-factory" style="color:#94a3b8;font-size:11px"></div>
       <div id="ab-box" style="cursor:pointer;color:#94a3b8" title="Cliquer pour activer/désactiver le ramassage des boîtes"></div>
@@ -498,18 +502,30 @@
   document.body.appendChild(box);
 
   const $ = id => box.querySelector('#ab-' + id);
+  const anyAuto = () => Object.values(autos).some(v => v);
   const paint = () => {
-    const b = $('toggle');
-    b.textContent = running ? 'ON' : 'OFF';
-    b.style.background = running ? '#16a34a' : '#475569';
+    const b = $('toggle'), all = Object.values(autos).every(v => v);
+    b.textContent = 'TOUT';
+    b.style.background = all ? '#16a34a' : '#475569';
     b.style.color = '#fff';
-    $('dot').style.background = running ? READY : '#64748b';
-    $('dot').title = running ? 'achats automatiques actifs' : 'achats en pause (analyse toujours active)';
+    b.title = all ? 'tout désactiver' : 'tout activer';
+    $('dot').style.background = anyAuto() ? READY : '#64748b';
+    $('dot').title = anyAuto() ? 'achats automatiques actifs' : 'achats en pause (analyse toujours active)';
+    $('autos').innerHTML = Object.entries(AUTO_CATS)
+      .map(([c, icon]) => `<span data-c="${c}" style="cursor:pointer;color:${autos[c] ? READY : '#64748b'}">${icon} ${autos[c] ? 'ON' : 'OFF'}</span>`)
+      .join('  ');
     $('box').innerHTML = `📦 boîtes : <b style="color:${autoBox ? READY : '#64748b'}">${autoBox ? 'AUTO' : 'OFF'}</b> · ${boxes} ramassées`;
   };
   $('toggle').onclick = () => {
-    running = !running;
-    localStorage.setItem(KEY, running ? '1' : '0');
+    const target = !Object.values(autos).every(v => v);
+    for (const c in autos) { autos[c] = target; localStorage.setItem('idleAutobuy.' + c, target ? '1' : '0'); }
+    paint(); schedule();
+  };
+  $('autos').onclick = e => {
+    const c = e.target.dataset.c;
+    if (!c) return;
+    autos[c] = !autos[c];
+    localStorage.setItem('idleAutobuy.' + c, autos[c] ? '1' : '0');
     paint(); schedule();
   };
   $('box').onclick = () => {
@@ -632,11 +648,9 @@
           adopt(p); paint();
           continue;
         }
-        if (!running) break;
-
-        const { pick, qty } = plan(p);
-        const re = AUTO_RESEARCH ? researchPurchase(p) : null;
-        const fa = p.factory ? factoryPurchase(p) : null;
+        const { pick, qty } = autos.upgrade ? plan(p) : {};
+        const re = autos.research ? researchPurchase(p) : null;
+        const fa = autos.factory && p.factory ? factoryPurchase(p) : null;
         if (!pick && !re && !fa) break;
 
         if (pick) {
@@ -697,5 +711,5 @@
     } catch (e) { /* réseau coupé : on retentera */ }
   }, 15000);
 
-  console.log('autobuy v3.8.1 chargé — lecture passive du polling de la page');
+  console.log('helper v3.9.0 chargé — lecture passive du polling de la page');
 })();

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.9.0
+- Ajout : bascules independantes pour upgrades, recherches et Factory (au lieu d'un seul ON/OFF global) — permet ex. de garder la Factory en manuel tout en laissant tourner les upgrades
+- Le bouton TOUT reste un raccourci pour activer/desactiver les trois d'un coup
+
 ## 3.8.1
 - UI : la ligne Factory precise a nouveau pourquoi aucun achat n'est en cours (attend le plein du warehouse, ou reset trop proche) au lieu d'un simple pause generique
 

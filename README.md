@@ -1,8 +1,9 @@
-# Idle Progress Bar MMO — Auto Buy
+# Idle Progress Bar MMO — Helper
 
 Userscript Tampermonkey pour [Idle Progress Bar MMO](https://ipb-mmo.ereldev.com/).
-Il surligne l'upgrade et la recherche les plus rentables directement dans le jeu, les achète
-automatiquement, et ramasse les boîtes dès qu'elles apparaissent.
+Il surligne l'upgrade et la recherche les plus rentables directement dans le jeu. L'achat
+automatique (upgrades, recherches, Factory) et le ramassage des boîtes sont optionnels,
+activables séparément.
 
 > **C'est un script d'automatisation.** Il joue à ta place. À n'utiliser qu'avec l'accord
 > du développeur du jeu.
@@ -11,7 +12,7 @@ automatiquement, et ramasse les boîtes dès qu'elles apparaissent.
 
 1. Installer [Tampermonkey](https://www.tampermonkey.net/)
 2. Tableau de bord → **Créer un nouveau script**
-3. Tout sélectionner (Ctrl+A), coller le contenu de [`idle-autobuy.user.js`](idle-autobuy.user.js), enregistrer (Ctrl+S)
+3. Tout sélectionner (Ctrl+A), coller le contenu de [`idle-progress-bar-mmo-helper.user.js`](idle-progress-bar-mmo-helper.user.js), enregistrer (Ctrl+S)
 4. Ouvrir le jeu — un panneau apparaît en bas à droite
 
 Le script ne contient aucune donnée liée à un compte précis : le classement des achats se
@@ -21,11 +22,12 @@ compte et n'importe quel stade de partie.
 ## Le panneau
 
 ```
-● AUTO BUY                    – [ON]
+● AUTO BUY                    – [TOUT]
 470 916 ⚡ · +5 718/s · 74 achats
 ⏳ reset dans 4h09 · 🎉 ×2 8m12 · base 2 859/s
 → Generator MK3 · ⚡56,05M · 2h59
 cible hors d'atteinte, achète Generator MK1
+⚡ ON  🔬 ON  🏭 OFF
 🔬 Production boost · 3 764 (2 057 dispo)
 🏭 Warehouse · 2 032 (455 🔋) · ⏸ · plein dans 19m27
 📦 boîtes : AUTO · 43 ramassées
@@ -34,15 +36,18 @@ cible hors d'atteinte, achète Generator MK1
 📦 +4 136 393 ⚡ · +73 🔬
 ```
 
-- **ON/OFF** ne pilote que les achats. L'analyse et le surlignage tournent en permanence,
-  ce qui permet de s'en servir comme simple assistant visuel en jouant à la main.
+- **⚡ 🔬 🏭** se basculent indépendamment (clic sur chaque icône) : achats upgrades,
+  recherches et Factory activables séparément — utile pour garder une catégorie en
+  manuel. **TOUT** est un raccourci qui active ou désactive les trois d'un coup.
+  L'analyse et le surlignage tournent en permanence quoi qu'il arrive, ce qui permet
+  de s'en servir comme simple assistant visuel même les trois catégories désactivées.
 - Le surlignage suit l'onglet affiché : upgrade cible sur **UPGRADES**, recherche sur
   **RESEARCH**, bâtiment sur **FACTORY**. Vert = achetable, orange = on épargne.
 - La ligne 🏭 n'apparaît qu'une fois `Factory Access` recherchée ; elle affiche le bâtiment
   visé, le stock disponible, et le temps avant que le `warehouse` soit plein. Si le stock
   suffit mais que rien n'est acheté, elle précise pourquoi (plein exigé, ou reset trop proche).
 - **📦 boîtes** se bascule indépendamment (clic sur la ligne).
-- Les deux réglages sont mémorisés dans `localStorage`.
+- Tous les réglages sont mémorisés dans `localStorage`.
 - **–** replie le panneau.
 
 ## Comment il choisit — Upgrades
