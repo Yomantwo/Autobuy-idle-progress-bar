@@ -80,8 +80,8 @@ en direct à chaque état reçu. Le classement se réorganise tout seul à mesur
 montent (+15 %/niveau), sans ordre codé en dur.
 
 - `income`, `synergy` : +1 %/niveau de production, permanent.
-- `base` : +1 ⚡/s de base, agit à la fois sur le cycle actif et sur le plancher de
-  production qui survit au reset (donc sur ce que rapporte le hors ligne).
+- `base` : +10 ⚡/s de base par niveau, agit à la fois sur le cycle actif et sur le plancher
+  de production qui survit au reset (donc sur ce que rapporte le hors ligne).
 - `offline` : +1 point de ratio hors ligne, valorisé sur le plancher post-reset.
 - `quickStart` : garantit un palier de départ sur les générateurs à chaque reset
   (proportionnel au meilleur niveau jamais atteint, arrondi **au supérieur**) ; valorisée
@@ -106,8 +106,8 @@ plancher.
 `offlineResearch` et `dailyBonus` rapportent des **points**, pas de l'énergie — elles se
 comparent dans leur propre monnaie (points gagnés par jour et par point investi) plutôt que
 d'être converties arbitrairement, et servent de repli quand la cible n'est pas abordable.
-Ce repli est lui aussi soumis à un délai de remboursement : au-delà, le script épargne, les
-points valant plus placés sur la cible énergie — et ils ne périment pas au reset.
+Ce repli est lui aussi soumis à un délai de remboursement (30 jours) : au-delà, le script
+épargne, les points valant plus placés sur la cible énergie — et ils ne périment pas au reset.
 
 ## Comment il choisit — Factory
 
@@ -155,19 +155,24 @@ En haut du fichier :
 | `MIN_REQ_GAP_MS` | 3200 | écart minimal entre deux requêtes du script |
 | `BULK_MAX` | 25 | plafond dur sur la quantité par requête |
 | `RESERVE` | 0 | énergie à toujours garder de côté |
-| `AUTO_RESEARCH` | `true` | acheter aussi les recherches |
 | `WAIT_WEIGHT` | 24 | poids de l'attente dans le score des upgrades |
 | `OFFLINE_DAYS_PER_WEEK` | 2.5 | rythme de déconnexion estimé, influence le classement d'`offline` |
 | `OFFLINE_CAP_HOURS` | 12 | plafond de durée créditée hors ligne (confirmé par le jeu) |
 | `OFFLINE_BASE_RATIO` | 0.50 | socle de la part créditée hors ligne, hors bonus de recherche |
+| `OFFLINE_PTS_PER_HOUR` | 408 | points/heure hors ligne, mesuré sur un compte (ne suit pas la puissance du joueur) |
+| `BASE_PER_LEVEL` | 10 | ⚡/s apporté par niveau de la recherche `base` |
+| `DAILY_BONUS_PER_LEVEL` | 0.225 | points de pourcentage apportés par niveau de `dailyBonus` |
+| `POINTS_PAYBACK_DAYS` | 30 | délai de remboursement max du repli `offlineResearch`/`dailyBonus` |
 | `WATCHDOG_MS` | 60000 | délai avant d'aller chercher l'état soi-même |
+| `ACT_BACKOFF_MS` | 60000 | pause après un achat refusé par le serveur |
 
 ## Limites connues
 
 - La simulation d'upgrades reste une politique gloutonne recalculée à chaque état, pas une
   optimisation globale sur toute la journée.
-- La récompense des boîtes est supposée constante alors qu'elle est indexée sur la
-  puissance du joueur.
+- `OFFLINE_PTS_PER_HOUR` (valorisation d'`offlineResearch`) est une constante mesurée sur
+  un compte, pas rescalée sur la puissance réelle du joueur — le ramassage de boîtes lui-même
+  lit la vraie récompense en direct, sans approximation.
 - Synergie collective et bonus externes sont capturés via un facteur calibré sur l'état
   courant, pas suivis en continu.
 - Le surlignage retrouve les cartes par leur **titre**. Si le jeu renomme une upgrade ou
