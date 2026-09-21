@@ -77,20 +77,42 @@ la journée avec et sans cet achat.
 
 Même principe : un critère unique, **⚡ gagnés par jour et par point investi**, recalculé
 en direct à chaque état reçu. Le classement se réorganise tout seul à mesure que les coûts
-montent (+15 %/niveau), sans ordre codé en dur.
+montent, sans ordre figé — à une exception près, assumée : `generatorMk3`, `factory` et `box`
+sont achetées en priorité tant qu'elles manquent, parce qu'elles débloquent des systèmes
+entiers (MK3, Power Cells, boîtes) que le critère ⚡/point ne sait pas chiffrer.
 
 - `income`, `synergy` : +1 %/niveau de production, permanent.
 - `base` : +10 ⚡/s de base par niveau, agit à la fois sur le cycle actif et sur le plancher
   de production qui survit au reset (donc sur ce que rapporte le hors ligne).
 - `offline` : +1 point de ratio hors ligne, valorisé sur le plancher post-reset.
 - `quickStart` : garantit un palier de départ sur les générateurs à chaque reset
-  (proportionnel au meilleur niveau jamais atteint, arrondi **au supérieur**) ; valorisée
-  par simulation de branches, comme Cost Reduction, parce que son effet déplace le point de
-  départ de toute la journée plutôt que d'ajouter un simple pourcentage.
+  (proportionnel au meilleur niveau jamais atteint, arrondi **au supérieur**).
+- `incomeOptimizer`, `costOptimizer` (Tier 2, derrière le `Laboratory`) : même mécanique,
+  mais le palier garanti porte sur `Income multiplier` et `Cost Reduction`, niveau pour niveau.
 - `tierResonance` : +1 %/tier atteint, plafonné à 5×niveau tiers comptés (formule lue dans
   le bundle du jeu). Rendements décroissants une fois le plafond au-delà du tier réel — le
   gain marginal retombe à 0 jusqu'à ce que `maxTierReached` progresse, sans exclusion codée
   en dur : le classement se corrige tout seul.
+
+`quickStart`, `incomeOptimizer` et `costOptimizer` déplacent le point de départ de toute la
+journée au lieu d'ajouter un pourcentage : elles sont valorisées par **simulation de branches**,
+comme Cost Reduction. Deux
+précautions s'y ajoutent, l'une et l'autre nécessaires pour que le chiffre veuille dire quelque
+chose :
+
+- Les deux branches comparées rejouent la **même séquence d'achats**, alignée sur le *niveau
+  atteint* et non sur la position dans la séquence. Sans ça, la branche avantagée rachetait son
+  propre cadeau un niveau plus haut — donc plus cher — et le palier ressortait négatif. La
+  divergence d'ordre du glouton pesait par ailleurs ~10 M ⚡/jour, l'ordre de grandeur du signal
+  cherché.
+- Le rendement d'un palier est **convexe** : +10 niveaux de `costOptimizer` valent 97× ce que
+  vaut +1. Noter le seul niveau suivant condamnerait la montée dès le premier pas, alors le
+  classement retient le meilleur **bloc** de niveaux (1, 2, 4, 8, 16). L'achat, lui, reste
+  niveau par niveau — c'est le seul que le jeu permette.
+
+Les prix renvoyés par le jeu portent **déjà** la remise de `Cost Reduction`. Une simulation de
+journée fraîche les ramène donc d'abord au niveau de remise qu'elle simule, faute de quoi la
+remise est comptée deux fois et la journée entière tourne avec des prix 40 % trop bas.
 
 `autoBuy` n'est jamais achetée, volontairement : elle débloque un auto-achat natif du jeu
 qui augmente le coût de tous les upgrades de 25 % tant qu'il est actif, sans rien apporter

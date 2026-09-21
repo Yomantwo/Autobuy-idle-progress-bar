@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Idle Progress Bar MMO - Helper
 // @namespace    local.idle.autobuy
-// @version      3.9.0
+// @version      3.10.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -59,8 +59,11 @@
     dailyBonus: 'Daily Bonus Booster', offline: 'Offline Production',
     offlineResearch: 'Offline Research', generatorMk3: 'Generator MK3', box: 'Box Sensor',
     tierResonance: 'Tier Resonance', factory: 'Factory Access',
+    incomeOptimizer: 'Income Optimizer', costOptimizer: 'Cost Optimizer', autoBuy: 'Auto Buy',
   };
-  const LABELS_FACTORY = { reactor: 'Reactor', warehouse: 'Warehouse', refinery: 'Refinery' };
+  const LABELS_FACTORY = {
+    reactor: 'Reactor', warehouse: 'Warehouse', refinery: 'Refinery', laboratory: 'Laboratory',
+  };
   const READY = '#22c55e';  // vert : achetable maintenant
   const WAIT  = '#f59e0b';  // orange : meilleure cible, pas encore abordable
   // --------------------------------
@@ -125,9 +128,10 @@
     : type === 'income' ? 0.10 * baseRate(p) * mult(p) / (1 + 0.10 * p.upgrades.income.level)
     : 0;
 
-  // Remise marginale réelle de Cost Reduction : additive, donc le niveau L+1 multiplie les
-  // prix par (1-0,02(L+1))/(1-0,02L), pas simplement -2 %.
-  const crDiscount = L => 1 - (1 - 0.02 * (L + 1)) / Math.max(0.01, 1 - 0.02 * L);
+  // Multiplicateur de prix de Cost Reduction, additif : -2 %/niveau (bonusValue 0,4 au niv. 20
+  // le confirme). La remise marginale du niveau L+1 en découle, ce n'est pas -2 % sec.
+  const crMul = L => Math.max(0.01, 1 - 0.02 * L);
+  const crDiscount = L => 1 - crMul(L + 1) / crMul(L);
 
   // Croissance du coût par niveau, déduite de cost10 = cost × (r¹⁰ - 1)/(r - 1)
   const growth = u => {
@@ -178,13 +182,19 @@
 
   // Simulation locale jusqu'au reset : coûts géométriques, gains linéaires, K constant, sans
   // boîtes ni bonus. startLvl override le point de départ des générateurs (sert à Quick Start).
-  const simulate = (p, T, firstType, startLvl) => {
+  const simulate = (p, T, firstType, startLvl, seq, credit) => {
     const lvl = {}, cost = {}, r = {}, max = {};
+    // Les prix reçus du jeu portent DÉJÀ la remise du niveau courant de Cost Reduction : on la
+    // remplace par celle du niveau simulé, sinon elle est comptée deux fois au fil de la journée.
+    const crNow = p.upgrades.costReduction ? p.upgrades.costReduction.level : 0;
+    const crStart = startLvl && startLvl.costReduction != null ? startLvl.costReduction : crNow;
+    const crFix = crMul(crStart) / crMul(crNow);
     for (const [type, u] of Object.entries(p.upgrades)) {
       if (u.locked) continue;
       r[type] = growth(u) || 1.2; max[type] = u.maxLevel;
       const l0 = startLvl && startLvl[type] != null ? startLvl[type] : u.level;
-      lvl[type] = l0; cost[type] = u.cost * Math.pow(r[type], l0 - u.level);
+      lvl[type] = l0;
+      cost[type] = u.cost * Math.pow(r[type], l0 - u.level) * (type === 'costReduction' ? 1 : crFix);
     }
     let base = startLvl
       ? p.basePassiveRate + p.research.base.bonusValue
@@ -206,19 +216,39 @@
 
     let E = startLvl ? 0 : p.energy - RESERVE, t = 0, produced = 0, first = true;
     let run = 0, streak = true; // combien de fois le plan rachète le type d'entrée
+    const trace = []; let si = 0;
+    const owed = {}; for (const k in credit) owed[k] = credit[k];
     // 3000 pas si startLvl (repart de bas, doit grimper beaucoup) sinon 400 suffit (départ au
     // niveau actuel, peu d'achats avant le reset).
     for (let step = 0; step < (startLvl ? 3000 : 400) && t < T; step++) {
       const opts = Object.keys(lvl).filter(k => max[k] == null || lvl[k] < max[k]);
       if (!opts.length) break;
-      const score = k => WAIT_WEIGHT * Math.max(0, (cost[k] - E) / rate()) + cost[k] / gain(k, E, t);
-      const c = first && firstType ? firstType : opts.sort((a, b) => score(a) - score(b))[0];
+      let c = null;
+      // seq impose l'ordre d'achat d'une autre branche : deux branches comparées suivent alors
+      // le même plan, et l'écart mesure le palier de départ seul, pas un changement d'ordre.
+      if (seq) {
+        // credit = niveaux déjà offerts par le palier : on SAUTE les achats correspondants au
+        // lieu de les rejouer plus haut, sinon le palier se facturerait son propre cadeau.
+        for (;;) {
+          const k = seq[si];
+          if (k == null) break;
+          if (owed[k] > 0) { owed[k]--; si++; continue; }
+          if (max[k] != null && lvl[k] >= max[k]) { si++; continue; }
+          break;
+        }
+        if (si < seq.length) c = seq[si++];
+      }
+      if (c == null) {
+        const score = k => WAIT_WEIGHT * Math.max(0, (cost[k] - E) / rate()) + cost[k] / gain(k, E, t);
+        c = first && firstType ? firstType : opts.sort((a, b) => score(a) - score(b))[0];
+      }
       first = false;
       if (cost[c] == null) break;
       const dt = Math.max(0, (cost[c] - E) / rate());
       if (t + dt >= T) break;
       produced += rate() * dt; E += rate() * dt - cost[c]; t += dt;
       if (streak && c === firstType) run++; else streak = false;
+      trace.push(c);
       lvl[c]++; cost[c] *= r[c];
       if (c === 'income') inc++;
       else if (c === 'costReduction') {
@@ -226,7 +256,7 @@
         for (const k in cost) if (k !== 'costReduction') cost[k] *= f;
       } else base += GEN[c];
     }
-    return { produced: produced + rate() * (T - t), run: Math.max(1, run) };
+    return { produced: produced + rate() * (T - t), run: Math.max(1, run), trace };
   };
 
   // best=cible visée, pick=achat immédiat (ou rien), wait=attente, proj=production projetée,
@@ -275,6 +305,42 @@
     }
     return hs;
   };
+  // Palier garanti chaque jour sur income/costReduction par Income/Cost Optimizer (Tier 2,
+  // niveau de la recherche = niveau de départ, 1 pour 1) : 0 tant que non recherchées.
+  const dailyStart = p => ({
+    income: p.research.incomeOptimizer ? p.research.incomeOptimizer.level : 0,
+    costReduction: p.research.costOptimizer ? p.research.costOptimizer.level : 0,
+  });
+  // Valeur d'un palier de départ : les deux branches rejouent la MÊME séquence d'achats, donc
+  // l'écart mesure le palier seul, pas une divergence d'ordre du glouton (bruit ~10 M ⚡/jour).
+  // Le rendement est CONVEXE (+10 niveaux vaut 97× ce que vaut +1) : noter le seul niveau suivant
+  // condamnerait la montée dès le premier pas. On retient donc le meilleur BLOC de niveaux.
+  const HEADSTART_BLOCKS = [1, 2, 4, 8, 16];
+  const HEADSTART_ROOM = HEADSTART_BLOCKS[HEADSTART_BLOCKS.length - 1];
+  const headstartScore = (p, r, startOf, extra) => {
+    const T = 86400;
+    const b = startOf(r.level);
+    const seq = simulate(p, T, null, b).trace;
+    const p0 = simulate(p, T, null, b, seq).produced;
+    const g = growth(r) || 1.15;
+    const room = r.maxLevel != null ? r.maxLevel - r.level : HEADSTART_ROOM;
+    let best = null;
+    for (const n of HEADSTART_BLOCKS) {
+      if (n > room) break;
+      const a = startOf(r.level + n);
+      const credit = {};
+      for (const k in a) {
+        const d = (a[k] || 0) - (b[k] || 0);
+        if (d > 0) credit[k] = d;
+      }
+      const gain = simulate(p, T, null, a, seq, credit).produced - p0
+        + (extra ? extra(r.level + n, r.level) : 0);
+      const cost = r.cost * (Math.pow(g, n) - 1) / (g - 1);
+      if (!best || gain / cost > best.gain / best.cost) best = { gain, cost };
+    }
+    return best || { gain: 0, cost: r.cost };
+  };
+
   // Production qui survit au reset : la recherche base tient, les upgrades repartent de zéro
   // sauf MK1/MK2/MK3 si Quick Start garantit un palier.
   const floorRate = p => {
@@ -306,19 +372,27 @@
     // Recherche (jamais reset) : garantit un palier de départ sur MK1/MK2/MK3 chaque jour.
     // Valorisée par simulation de branches, deux canaux comme base (actif + plancher hors ligne).
     quickStart: p => {
-      const T = 86400;
-      // income/costReduction sont des upgrades qui repartent de zéro au reset : les deux
-      // branches simulées doivent aussi les remettre à zéro pour une comparaison équitable.
-      const cur = p.research.quickStart.level;
-      const hsCur = quickStartHeadstart(p, cur), hsNext = quickStartHeadstart(p, cur + 1);
-      const active = simulate(p, T, null, { income: 0, costReduction: 0, ...hsNext }).produced
-        - simulate(p, T, null, { income: 0, costReduction: 0, ...hsCur }).produced;
-
-      const floorDelta = (hsNext.auto - hsCur.auto) + 5 * (hsNext.advanced - hsCur.advanced)
-        + GEN.generatorMk3 * (hsNext.generatorMk3 - hsCur.generatorMk3);
-      const offline = floorDelta * offlineMult(p) * offlineSecPerDay() * offlineRatio(p);
-
-      return active + offline;
+      // Départ réel du jour : 0 sauf si Income/Cost Optimizer garantit un palier (Tier 2).
+      const start = dailyStart(p);
+      // Second canal, comme base : le palier relève aussi le plancher qui survit au reset.
+      const floor = (la, lb) => {
+        const a = quickStartHeadstart(p, la), b = quickStartHeadstart(p, lb);
+        return ((a.auto - b.auto) + 5 * (a.advanced - b.advanced)
+          + GEN.generatorMk3 * (a.generatorMk3 - b.generatorMk3))
+          * offlineMult(p) * offlineSecPerDay() * offlineRatio(p);
+      };
+      return headstartScore(p, p.research.quickStart,
+        l => ({ ...start, ...quickStartHeadstart(p, l) }), floor);
+    },
+    // Même mécanique que Quick Start mais sur income/costReduction, niveau de recherche =
+    // niveau de départ garanti. Valorisées pareil : blocs de branches sur une journée.
+    incomeOptimizer: p => {
+      const start = dailyStart(p), hs = quickStartHeadstart(p, p.research.quickStart.level);
+      return headstartScore(p, p.research.incomeOptimizer, l => ({ ...start, ...hs, income: l }));
+    },
+    costOptimizer: p => {
+      const start = dailyStart(p), hs = quickStartHeadstart(p, p.research.quickStart.level);
+      return headstartScore(p, p.research.costOptimizer, l => ({ ...start, ...hs, costReduction: l }));
     },
   };
 
@@ -334,7 +408,9 @@
 
   const researchUsable = (p, t) => {
     const r = p.research[t];
-    return (!r || (r.maxLevel != null && r.level >= r.maxLevel)) ? null : r;
+    // Le champ locked (Tier 2, derrière Laboratory) n'était pas verifie : sans Laboratory,
+    // le niveau reste sous maxLevel et la recherche paraissait a tort achetable.
+    return (!r || r.locked || (r.maxLevel != null && r.level >= r.maxLevel)) ? null : r;
   };
 
   // Meilleur score gain/coût parmi les clés de gainMap, filtré par usable() puis par affordable
@@ -344,8 +420,12 @@
     for (const type of Object.keys(gainMap)) {
       const r = researchUsable(p, type);
       if (!r || (affordable && r.cost > p.researchPoints)) continue;
-      const score = gainMap[type](p) / r.cost;
-      if (!best || score > best.score) best = { type, cost: r.cost, score };
+      // Un gainMap peut renvoyer un BLOC {gain, cost} : on classe sur le rendement du bloc,
+      // mais la cible reste le niveau suivant, seul achat réellement possible.
+      const g = gainMap[type](p);
+      const score = typeof g === 'number' ? g / r.cost : g.gain / g.cost;
+      // > 0 : une recherche à gain nul ou négatif (tierResonance sous son plafond) ne se vise pas.
+      if (score > 0 && (!best || score > best.score)) best = { type, cost: r.cost, score };
     }
     return best;
   };
@@ -413,7 +493,13 @@
     }
     return null;
   };
-  const factoryTarget = p => factoryDirectTarget(p);
+  // Laboratory (unique) passe devant, comme les recherches d'accès : il ne produit aucun RP
+  // en soi, sa valeur (débloquer le Tier 2) échappe au score marginal des trois autres.
+  const factoryTarget = p => {
+    const lab = p.factory.laboratory;
+    if (lab.level < lab.maxLevel) return { type: 'laboratory', cost: lab.cost };
+    return factoryDirectTarget(p);
+  };
   // Acheter tôt dans la journée : il faut pouvoir regagner la dépense avant le reset, sinon
   // la récolte du soir paie l'achat alors qu'attendre le lendemain ne coûte rien.
   const factoryPurchase = p => {

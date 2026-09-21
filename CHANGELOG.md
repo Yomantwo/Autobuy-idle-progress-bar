@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.10.0
+- Fix majeur : les prix envoyes par le serveur portent DEJA la remise de Cost Reduction. Les simulations de journee fraiche (quickStart, Tier 2) repartaient de ces prix remises puis reappliquaient la remise au fil du jour — elles tournaient avec des prix 40% trop bas. Verifie a 0,00% en extrapolant deux instantanes separes de 14 niveaux avec costReduction a 22 puis 20
+- Fix majeur : costOptimizer etait note -11,6 M energie/jour. En sequence forcee son j-ieme achat se faisait un niveau plus haut que la branche de reference, donc 35% plus cher, alors qu'en jeu le palier offert DISPENSE du premier achat au lieu de le rencherir. Les branches sont desormais alignees sur le niveau atteint, pas sur la position dans la sequence : le score passe a +5,5 k/jour, positif
+- Valorisation des paliers de depart (quickStart, incomeOptimizer, costOptimizer) : les deux branches comparees rejouent la MEME sequence d'achats, ce qui supprime le bruit d'ordonnancement du glouton (~10 M energie/jour, du meme ordre que le signal cherche)
+- Nouvelle regle : le rendement d'un palier de depart est CONVEXE (+10 niveaux de costOptimizer valent 97x ce que vaut +1). Noter le seul niveau suivant condamnait la montee des le premier pas — le classement retient desormais le meilleur BLOC de niveaux (1, 2, 4, 8, 16), l'achat restant niveau par niveau
+- Consequence : costOptimizer passe de -11,6 M (artefact) a un score de 2,43 sur son meilleur bloc de 8 niveaux, incomeOptimizer a 0,33. Les deux restent tres loin de tierResonance (6 196), base (1 402) et income (1 003) : le script continue de ne pas les acheter, mais sur un modele correct et non sur un artefact
+- Classement complet des recherches mesure a 11 ms, aucun impact sur la charge
+
 ## 3.9.0
 - Ajout : bascules independantes pour upgrades, recherches et Factory (au lieu d'un seul ON/OFF global) — permet ex. de garder la Factory en manuel tout en laissant tourner les upgrades
 - Le bouton TOUT reste un raccourci pour activer/desactiver les trois d'un coup
