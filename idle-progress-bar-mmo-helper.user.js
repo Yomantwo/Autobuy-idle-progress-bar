@@ -1,4 +1,4 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         Idle Progress Bar MMO - Helper
 // @namespace    local.idle.autobuy
 // @version      3.10.0
