@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.11.0
+- Fix majeur : aucun des trois batiments Factory (reactor, warehouse, refinery) ne verifiait son maxLevel. Une fois le reactor au plafond sur Yomantwo, le script continuait de le viser en priorite (part 54% de l'allocation) sans jamais pouvoir l'acheter, bloquant tout achat de warehouse/refinery derriere lui
+- La repartition analytique (Lagrangienne) suppose une croissance illimitee du reactor : ce n'est plus vrai une fois plafonne, le debit devient une CONSTANTE. Regle de repli : warehouse tant que sa capacite ne suffit pas a absorber le debit quotidien (perte de production sinon), puis refinery, seul levier sans plafond une fois warehouse lui-meme au max
+- Verifie sur 5 scenarios (normal, reactor seul plafonne, reactor+warehouse plafonnes, tout plafonne, reactor plafonne avec warehouse deja suffisant) : chacun cible le bon batiment, le cas "tout plafonne" renvoie null proprement sans requete inutile
+
 ## 3.10.0
 - Fix majeur : les prix envoyes par le serveur portent DEJA la remise de Cost Reduction. Les simulations de journee fraiche (quickStart, Tier 2) repartaient de ces prix remises puis reappliquaient la remise au fil du jour — elles tournaient avec des prix 40% trop bas. Verifie a 0,00% en extrapolant deux instantanes separes de 14 niveaux avec costReduction a 22 puis 20
 - Fix majeur : costOptimizer etait note -11,6 M energie/jour. En sequence forcee son j-ieme achat se faisait un niveau plus haut que la branche de reference, donc 35% plus cher, alors qu'en jeu le palier offert DISPENSE du premier achat au lieu de le rencherir. Les branches sont desormais alignees sur le niveau atteint, pas sur la position dans la sequence : le score passe a +5,5 k/jour, positif

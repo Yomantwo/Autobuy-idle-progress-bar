@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Idle Progress Bar MMO - Helper
 // @namespace    local.idle.autobuy
-// @version      3.10.0
+// @version      3.11.0
 // @description  Surligne et achète l'upgrade et la recherche les plus rentables, ramasse les boîtes, sans ajouter de polling ni de communication externe
 // @match        https://ipb-mmo.ereldev.com/*
 // @run-at       document-idle
@@ -478,14 +478,35 @@
     return { reactor: r * r * y, warehouse: y, refinery: (r - q) * r * y / 2 };
   };
 
+  const factoryCapped = (p, type) => {
+    const u = p.factory[type];
+    return u.maxLevel != null && u.level >= u.maxLevel;
+  };
+
   // Un score marginal est aveugle ici : agrandir le warehouse augmente la récolte mais réduit
   // d'autant le budget, si bien que le glouton finit par s'étrangler. On suit donc la répartition.
   const factoryDirectTarget = p => {
+    // Le reactor a un plafond (niveau max) : une fois atteint, il n'y a plus de croissance à
+    // financer, l'allocation Lagrangienne (dérivée pour maximiser une croissance) n'a plus de
+    // sens. Le débit devient une CONSTANTE : warehouse tant qu'il déborde chaque jour (perte de
+    // production au-delà de sa capacité), sinon refinery, seul levier qui reste sans plafond.
+    if (factoryCapped(p, 'reactor')) {
+      const rate = factoryRate(p);
+      if (!factoryCapped(p, 'warehouse') && factoryCap(p.factory.warehouse.level) < rate * 86400) {
+        return { type: 'warehouse', cost: p.factory.warehouse.cost };
+      }
+      if (!factoryCapped(p, 'refinery')) return { type: 'refinery', cost: p.factory.refinery.cost };
+      return null;
+    }
     const part = factoryAllocation(p);
     const lv = { reactor: p.factory.reactor.level, warehouse: p.factory.warehouse.level, refinery: p.factory.refinery.level };
     const total = factorySpent(lv.reactor) + factorySpent(lv.warehouse) + factorySpent(lv.refinery);
     const retard = t => total * part[t] - factorySpent(lv[t]);
-    const ordre = ['reactor', 'warehouse', 'refinery'].sort((a, b) => retard(b) - retard(a));
+    // Plafonnés exclus d'office : cibler un bâtiment déjà au max le bloquerait indéfiniment,
+    // son "retard" ne pouvant jamais être comblé par un achat.
+    const ordre = ['reactor', 'warehouse', 'refinery']
+      .filter(t => !factoryCapped(p, t))
+      .sort((a, b) => retard(b) - retard(a));
     // Le plus en retard d'abord ; s'il dépasse la capacité maximale il ne sera jamais payable.
     for (const type of ordre) {
       const cost = p.factory[type].cost;

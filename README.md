@@ -146,7 +146,14 @@ sont donc répartis selon une allocation résolue analytiquement (maximiser la c
 budget à long terme), recalculée à chaque état reçu à partir des coûts et débits réels.
 
 Le bâtiment le plus en retard sur sa part cible de dépense cumulée est acheté en priorité,
-parmi ceux dont le coût reste sous la capacité maximale du `warehouse` (sinon jamais payable).
+parmi ceux dont le coût reste sous la capacité maximale du `warehouse` (sinon jamais payable),
+et hors ceux déjà à leur niveau maximum.
+
+`reactor` a lui aussi un plafond. Une fois atteint, la répartition analytique n'a plus de sens :
+elle suppose une croissance illimitée du budget, or le débit devient alors une constante. Le
+script bascule sur une règle simple — `warehouse` tant que sa capacité ne suffit pas à absorber
+le débit quotidien (le surplus serait perdu), puis `refinery`, seul levier qui reste sans
+plafond une fois `warehouse` lui-même au maximum.
 
 La réserve avant reset s'applique aux trois : si le temps pour regagner ce qui serait dépensé
 dépasse ce qu'il reste avant le reset, le script épargne plutôt que de vider le stock juste
